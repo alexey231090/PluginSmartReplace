@@ -34,20 +34,38 @@ func execute_json_command(json_text: String):
 	
 	var json = JSON.new()
 	var parse_result = json.parse(clean_json)
-	
 	if parse_result != OK:
 		print("Ошибка парсинга JSON: ", json.get_error_message())
 		print("Проверьте синтаксис JSON!")
 		return
 	
 	var data = json.data
+	if typeof(data) == TYPE_ARRAY:
+		# Batch-режим: массив команд
+		var all_success = true
+		for cmd in data:
+			if not cmd.has("action"):
+				print("Одна из команд не содержит поле 'action'!")
+				all_success = false
+				continue
+			var ok = execute_json_single(cmd)
+			if not ok:
+				all_success = false
+		if all_success:
+			print("Все JSON команды выполнены успешно!")
+		else:
+			print("Некоторые JSON команды завершились с ошибкой!")
+		return
+	else:
+		# Одиночная команда
+		execute_json_single(data)
+
+func execute_json_single(data: Dictionary) -> bool:
 	if not data.has("action"):
 		print("JSON должен содержать поле 'action'!")
-		return
-	
+		return false
 	var action = data.action
 	var success = false
-	
 	match action:
 		"add_function":
 			success = handle_add_function(data)
@@ -61,12 +79,12 @@ func execute_json_command(json_text: String):
 			success = handle_delete_code(data)
 		_:
 			print("Неизвестное действие: ", action)
-			return
-	
+			return false
 	if success:
 		print("JSON команда выполнена успешно!")
 	else:
 		print("Ошибка при выполнении JSON команды!")
+	return success
 
 func handle_add_function(data: Dictionary) -> bool:
 	if not data.has("name") or not data.has("code"):
@@ -190,34 +208,24 @@ func show_json_preview(json_text: String):
 	
 	var json = JSON.new()
 	var parse_result = json.parse(clean_json)
-	
 	if parse_result != OK:
 		print("Ошибка парсинга JSON: ", json.get_error_message())
 		print("Проверьте синтаксис JSON!")
 		return
 	
 	var data = json.data
-	if not data.has("action"):
-		print("JSON должен содержать поле 'action'!")
-		return
-	
-	var action = data.action
 	var preview_text = ""
-	
-	match action:
-		"add_function":
-			preview_text = generate_add_function_preview(data)
-		"replace_function":
-			preview_text = generate_replace_function_preview(data)
-		"delete_function":
-			preview_text = generate_delete_function_preview(data)
-		"add_code":
-			preview_text = generate_add_code_preview(data)
-		"delete_code":
-			preview_text = generate_delete_code_preview(data)
-		_:
-			preview_text = "Неизвестное действие: " + action
-	
+	if typeof(data) == TYPE_ARRAY:
+		# Batch-режим: массив команд
+		for idx in range(data.size()):
+			var cmd = data[idx]
+			if not cmd.has("action"):
+				preview_text += "❌ Команда #" + str(idx+1) + ": нет поля 'action'\n"
+				continue
+			preview_text += "--- Команда #" + str(idx+1) + " ---\n"
+			preview_text += generate_preview_for_single(cmd) + "\n"
+	else:
+		preview_text = generate_preview_for_single(data)
 	show_preview_dialog(preview_text, json_text)
 
 func generate_add_function_preview(data: Dictionary) -> String:
@@ -741,7 +749,7 @@ func smart_replace_function_with_comment(function_data: Dictionary, new_code: St
 			if success:
 				print("Функция успешно заменена!")
 				# Автоматически перезагружаем файл в редакторе
-				reload_script_in_editor(current_script)
+				pass
 			else:
 				print("Ошибка при замене функции!")
 
@@ -977,7 +985,7 @@ func add_new_function(name: String, args: String, code: String):
 			file.close()
 			print("Функция успешно добавлена!")
 			# Автоматически перезагружаем файл в редакторе
-			reload_script_in_editor(current_script)
+			pass
 
 func delete_function(function_data: Dictionary):
 	var editor_interface = get_editor_interface()
@@ -992,7 +1000,7 @@ func delete_function(function_data: Dictionary):
 			if success:
 				print("Функция успешно удалена!")
 				# Автоматически перезагружаем файл в редакторе
-				reload_script_in_editor(current_script)
+				pass
 			else:
 				print("Ошибка при удалении функции!")
 
@@ -1044,173 +1052,6 @@ func remove_function_from_text(content: String, function_data: Dictionary) -> St
 	
 	return "\n".join(result_lines) 
 
-func reload_script_in_editor(script: Script):
-	# Перезагружаем скрипт в редакторе
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		# Принудительно обновляем скрипт
-		script.take_over_path(script.resource_path)
-		
-		# Обновляем редактор
-		editor_interface.get_resource_filesystem().scan()
-		
-		# Файл обновлен
-		pass 
-
-func add_code_to_file(code: String, position: int = 0, line_number: int = 1):
-	if code.strip_edges() == "":
-		print("Код не может быть пустым!")
-		return
-		
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = insert_code_to_file(file_path, code, position, line_number)
-			
-			if success:
-				print("Код успешно добавлен!")
-				reload_script_in_editor(current_script)
-			else:
-				print("Ошибка при добавлении кода!")
-
-func insert_code_to_file(file_path: String, code: String, position: int, line_number: int) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	var lines = content.split("\n")
-	var code_lines = code.split("\n")
-	var insert_index = 0
-	
-	# Определяем место вставки
-	match position:
-		0:  # В конец файла
-			insert_index = lines.size()
-			# Добавляем пустую строку если файл не заканчивается пустой строкой
-			if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
-				lines.append("")
-				insert_index += 1
-		1:  # В начало файла
-			insert_index = 0
-		2:  # В начало после extends
-			insert_index = find_extends_line(lines) + 1
-			if insert_index <= 0:  # Если extends не найден, вставляем в начало
-				insert_index = 0
-		3:  # В начало перед extends
-			insert_index = find_extends_line(lines)
-			if insert_index < 0:  # Если extends не найден, вставляем в начало
-				insert_index = 0
-		4:  # На конкретную строку
-			insert_index = line_number - 1  # Конвертируем в индекс (начиная с 0)
-			if insert_index < 0:
-				insert_index = 0
-			elif insert_index > lines.size():
-				insert_index = lines.size()
-	
-	# Вставляем код
-	for i in range(code_lines.size()):
-		lines.insert(insert_index + i, code_lines[i])
-	
-	var new_content = "\n".join(lines)
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true 
-
-func find_extends_line(lines: Array) -> int:
-	# Ищем строку с extends
-	for i in range(lines.size()):
-		var line = lines[i].strip_edges()
-		if line.begins_with("extends "):
-			return i
-	return -1  # extends не найден
-
-func delete_code_from_file(code_to_delete: String):
-	if code_to_delete.strip_edges() == "":
-		print("Код для удаления не может быть пустым!")
-		return
-		
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = remove_code_from_file(file_path, code_to_delete)
-			
-			if success:
-				print("Код успешно удален!")
-				reload_script_in_editor(current_script)
-			else:
-				print("Ошибка при удалении кода или код не найден!")
-
-func remove_code_from_file(file_path: String, code_to_delete: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	# Удаляем код
-	var new_content = remove_code_from_text(content, code_to_delete)
-	if new_content == content:
-		return false  # Код не найден
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true
-
-func remove_code_from_text(content: String, code_to_delete: String) -> String:
-	var lines = content.split("\n")
-	var code_lines = code_to_delete.split("\n")
-	
-	# Ищем начало кода для удаления
-	for i in range(lines.size() - code_lines.size() + 1):
-		var found = true
-		
-		# Проверяем, совпадает ли код начиная с текущей строки
-		for j in range(code_lines.size()):
-			if i + j >= lines.size() or lines[i + j].strip_edges() != code_lines[j].strip_edges():
-				found = false
-				break
-		
-		if found:
-			# Удаляем найденный код
-			var result_lines = []
-			for k in range(lines.size()):
-				if k < i or k >= i + code_lines.size():
-					result_lines.append(lines[k])
-			
-			return "\n".join(result_lines)
-	
-	# Код не найден
-	return content 
-
 func add_new_function_with_comment(name: String, args: String, code: String, comment: String):
 	if name.strip_edges() == "":
 		print("Имя функции не может быть пустым!")
@@ -1227,7 +1068,7 @@ func add_new_function_with_comment(name: String, args: String, code: String, com
 			
 			if success:
 				print("Функция с комментарием успешно добавлена!")
-				reload_script_in_editor(current_script)
+				pass
 			else:
 				print("Ошибка при добавлении функции!")
 
@@ -1273,3 +1114,169 @@ func append_function_with_comment_to_file(file_path: String, name: String, args:
 	file.close()
 	
 	return true 
+
+func generate_preview_for_single(data: Dictionary) -> String:
+	if not data.has("action"):
+		return "❌ Нет поля 'action'!"
+	var action = data.action
+	match action:
+		"add_function":
+			return generate_add_function_preview(data)
+		"replace_function":
+			return generate_replace_function_preview(data)
+		"delete_function":
+			return generate_delete_function_preview(data)
+		"add_code":
+			return generate_add_code_preview(data)
+		"delete_code":
+			return generate_delete_code_preview(data)
+		_:
+			return "Неизвестное действие: " + action 
+
+func add_code_to_file(code: String, position: int = 0, line_number: int = 1):
+	if code.strip_edges() == "":
+		print("Код не может быть пустым!")
+		return
+	
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var success = insert_code_to_file(file_path, code, position, line_number)
+			if success:
+				print("Код успешно добавлен!")
+			else:
+				print("Ошибка при добавлении кода!")
+
+func delete_code_from_file(code_to_delete: String):
+	if code_to_delete.strip_edges() == "":
+		print("Код для удаления не может быть пустым!")
+		return
+	
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var success = remove_code_from_file(file_path, code_to_delete)
+			if success:
+				print("Код успешно удален!")
+			else:
+				print("Ошибка при удалении кода или код не найден!") 
+
+func insert_code_to_file(file_path: String, code: String, position: int, line_number: int) -> bool:
+	# Читаем файл
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		return false
+
+	var content = file.get_as_text()
+	file.close()
+
+	var lines = content.split("\n")
+	var code_lines = code.split("\n")
+	var insert_index = 0
+
+	# Определяем место вставки
+	match position:
+		0:  # В конец файла
+			insert_index = lines.size()
+			# Добавляем пустую строку если файл не заканчивается пустой строкой
+			if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
+				lines.append("")
+				insert_index += 1
+		1:  # В начало файла
+			insert_index = 0
+		2:  # В начало после extends
+			insert_index = find_extends_line(lines) + 1
+			if insert_index <= 0:  # Если extends не найден, вставляем в начало
+				insert_index = 0
+		3:  # В начало перед extends
+			insert_index = find_extends_line(lines)
+			if insert_index < 0:  # Если extends не найден, вставляем в начало
+				insert_index = 0
+		4:  # На конкретную строку
+			insert_index = line_number - 1  # Конвертируем в индекс (начиная с 0)
+			if insert_index < 0:
+				insert_index = 0
+			elif insert_index > lines.size():
+				insert_index = lines.size()
+
+	# Вставляем код
+	for i in range(code_lines.size()):
+		lines.insert(insert_index + i, code_lines[i])
+
+	var new_content = "\n".join(lines)
+
+	# Записываем обновленный контент
+	file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		return false
+
+	file.store_string(new_content)
+	file.close()
+
+	return true
+
+func remove_code_from_file(file_path: String, code_to_delete: String) -> bool:
+	# Читаем файл
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		return false
+
+	var content = file.get_as_text()
+	file.close()
+
+	# Удаляем код
+	var new_content = remove_code_from_text(content, code_to_delete)
+	if new_content == content:
+		return false  # Код не найден
+
+	# Записываем обновленный контент
+	file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		return false
+
+	file.store_string(new_content)
+	file.close()
+
+	return true
+
+func remove_code_from_text(content: String, code_to_delete: String) -> String:
+	var lines = content.split("\n")
+	var code_lines = code_to_delete.split("\n")
+
+	# Ищем начало кода для удаления
+	for i in range(lines.size() - code_lines.size() + 1):
+		var found = true
+
+		# Проверяем, совпадает ли код начиная с текущей строки
+		for j in range(code_lines.size()):
+			if i + j >= lines.size() or lines[i + j].strip_edges() != code_lines[j].strip_edges():
+				found = false
+				break
+
+		if found:
+			# Удаляем найденный код
+			var result_lines = []
+			for k in range(lines.size()):
+				if k < i or k >= i + code_lines.size():
+					result_lines.append(lines[k])
+
+			return "\n".join(result_lines)
+
+	# Код не найден
+	return content
+
+func find_extends_line(lines: Array) -> int:
+	# Ищем строку с extends
+	for i in range(lines.size()):
+		var line = lines[i].strip_edges()
+		if line.begins_with("extends "):
+			return i
+	return -1  # extends не найден 
