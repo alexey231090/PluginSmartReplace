@@ -76,8 +76,9 @@ func handle_add_function(data: Dictionary) -> bool:
 	var name = data.name
 	var args = data.get("parameters", "")
 	var code = data.code
+	var comment = data.get("comment", "")
 	
-	add_new_function(name, args, code)
+	add_new_function_with_comment(name, args, code, comment)
 	return true
 
 func handle_replace_function(data: Dictionary) -> bool:
@@ -87,13 +88,14 @@ func handle_replace_function(data: Dictionary) -> bool:
 	
 	var signature = data.signature
 	var code = data.code
+	var comment = data.get("comment", "")  # Новый комментарий (пустой = удалить старый)
 	
 	var function_data = find_function_by_signature(signature)
 	if function_data.is_empty():
 		print("Функция с сигнатурой '", signature, "' не найдена!")
 		return false
 	
-	smart_replace_function(function_data, code)
+	smart_replace_function_with_comment(function_data, code, comment)
 	return true
 
 func handle_delete_function(data: Dictionary) -> bool:
@@ -225,11 +227,16 @@ func generate_add_function_preview(data: Dictionary) -> String:
 	var name = data.name
 	var args = data.get("parameters", "")
 	var code = data.code
+	var comment = data.get("comment", "")
 	
 	var signature = "func " + name + "(" + args + "):" if args != "" else "func " + name + "():"
 	
 	var preview = "➕ ДОБАВИТЬ ФУНКЦИЮ:\n"
 	preview += "📝 Сигнатура: " + signature + "\n"
+	
+	if comment.strip_edges() != "":
+		preview += "💬 Комментарий: " + comment + "\n"
+	
 	preview += "📄 Код:\n"
 	
 	var code_lines = code.split("\n")
@@ -248,6 +255,7 @@ func generate_replace_function_preview(data: Dictionary) -> String:
 	
 	var signature = data.signature
 	var code = data.code
+	var comment = data.get("comment", "")
 	var function_data = find_function_by_signature(signature)
 	
 	if function_data.is_empty():
@@ -256,6 +264,12 @@ func generate_replace_function_preview(data: Dictionary) -> String:
 	var preview = "🔄 ЗАМЕНИТЬ ФУНКЦИЮ:\n"
 	preview += "📝 Сигнатура: " + signature + "\n"
 	preview += "📍 Строка: " + str(function_data.line) + "\n"
+	
+	if comment.strip_edges() != "":
+		preview += "💬 Новый комментарий: " + comment + "\n"
+	else:
+		preview += "🗑️ Старый комментарий будет удален\n"
+	
 	preview += "📄 Новый код:\n"
 	
 	var code_lines = code.split("\n")
@@ -280,7 +294,7 @@ func generate_delete_function_preview(data: Dictionary) -> String:
 	var preview = "🗑️ УДАЛИТЬ ФУНКЦИЮ:\n"
 	preview += "📝 Сигнатура: " + signature + "\n"
 	preview += "📍 Строка: " + str(function_data.line) + "\n"
-	preview += "⚠️ Внимание: Вся функция будет удалена!"
+	preview += "⚠️ Внимание: Функция и комментарий над ней будут удалены!"
 	
 	return preview
 
@@ -416,7 +430,7 @@ func show_smart_replace_dialog_v2():
 	
 	# Поле для JSON
 	var json_edit = TextEdit.new()
-	json_edit.placeholder_text = '// Примеры JSON команд:\n\n// Добавить функцию:\n{\n  "action": "add_function",\n  "name": "move_player",\n  "parameters": "direction, speed",\n  "code": "position += direction * speed * delta"\n}\n\n// Заменить функцию:\n{\n  "action": "replace_function",\n  "signature": "func _ready():",\n  "code": "print(\\"Game started!\\")\\nsetup_player()"\n}\n\n// Добавить код в конец файла:\n{\n  "action": "add_code",\n  "code": "var player_health = 100",\n  "position_type": "end"\n}\n\n// Добавить код в начало файла:\n{\n  "action": "add_code",\n  "code": "@tool",\n  "position_type": "start"\n}\n\n// Добавить код после extends:\n{\n  "action": "add_code",\n  "code": "var player_speed = 5.0",\n  "position_type": "after_extends"\n}\n\n// Добавить код на конкретную строку:\n{\n  "action": "add_code",\n  "code": "var test_var = 42",\n  "position_type": "specific_line",\n  "line_number": 10\n}\n\n// Удалить код:\n{\n  "action": "delete_code",\n  "code": "var old_variable = 10"\n}'
+	json_edit.placeholder_text = '// Примеры JSON команд:\n\n// Добавить функцию:\n{\n  "action": "add_function",\n  "name": "move_player",\n  "parameters": "direction, speed",\n  "code": "position += direction * speed * delta"\n}\n\n// Добавить функцию с комментарием:\n{\n  "action": "add_function",\n  "name": "take_damage",\n  "parameters": "damage_amount",\n  "comment": "Уменьшает здоровье игрока на указанное количество",\n  "code": "player_health -= damage_amount\\nif player_health <= 0:\\n\\tdie()"\n}\n\n// Заменить функцию:\n{\n  "action": "replace_function",\n  "signature": "func _ready():",\n  "code": "print(\\"Game started!\\")\\nsetup_player()",\n  "comment": "Инициализация игры при запуске"\n}\n\n// Добавить код в конец файла:\n{\n  "action": "add_code",\n  "code": "var player_health = 100",\n  "position_type": "end"\n}\n\n// Добавить код в начало файла:\n{\n  "action": "add_code",\n  "code": "@tool",\n  "position_type": "start"\n}\n\n// Добавить код после extends:\n{\n  "action": "add_code",\n  "code": "var player_speed = 5.0",\n  "position_type": "after_extends"\n}\n\n// Добавить код на конкретную строку:\n{\n  "action": "add_code",\n  "code": "var test_var = 42",\n  "position_type": "specific_line",\n  "line_number": 10\n}\n\n// Удалить код:\n{\n  "action": "delete_code",\n  "code": "var old_variable = 10"\n}'
 	json_edit.custom_minimum_size = Vector2(960, 600)
 	json_tab.add_child(json_edit)
 	
@@ -712,6 +726,9 @@ func find_function_end(lines: Array, start_index: int) -> int:
 	return i
 
 func smart_replace_function(function_data: Dictionary, new_code: String):
+	smart_replace_function_with_comment(function_data, new_code, "")
+
+func smart_replace_function_with_comment(function_data: Dictionary, new_code: String, comment: String):
 	var editor_interface = get_editor_interface()
 	var script_editor = editor_interface.get_script_editor()
 	
@@ -719,7 +736,7 @@ func smart_replace_function(function_data: Dictionary, new_code: String):
 		var current_script = script_editor.get_current_script()
 		if current_script:
 			var file_path = current_script.resource_path
-			var success = replace_function_content(file_path, function_data, new_code)
+			var success = replace_function_content_with_comment(file_path, function_data, new_code, comment)
 			
 			if success:
 				print("Функция успешно заменена!")
@@ -729,6 +746,9 @@ func smart_replace_function(function_data: Dictionary, new_code: String):
 				print("Ошибка при замене функции!")
 
 func replace_function_content(file_path: String, function_data: Dictionary, new_code: String) -> bool:
+	return replace_function_content_with_comment(file_path, function_data, new_code, "")
+
+func replace_function_content_with_comment(file_path: String, function_data: Dictionary, new_code: String, comment: String) -> bool:
 	# Читаем файл
 	var file = FileAccess.open(file_path, FileAccess.READ)
 	if not file:
@@ -738,7 +758,7 @@ func replace_function_content(file_path: String, function_data: Dictionary, new_
 	file.close()
 	
 	# Заменяем содержимое функции
-	var new_content = replace_function_content_in_text(content, function_data, new_code)
+	var new_content = replace_function_content_with_comment_in_text(content, function_data, new_code, comment)
 	if new_content == content:
 		return false
 	
@@ -753,12 +773,28 @@ func replace_function_content(file_path: String, function_data: Dictionary, new_
 	return true
 
 func replace_function_content_in_text(content: String, function_data: Dictionary, new_code: String) -> String:
+	return replace_function_content_with_comment_in_text(content, function_data, new_code, "")
+
+func replace_function_content_with_comment_in_text(content: String, function_data: Dictionary, new_code: String, comment: String) -> String:
 	var lines = content.split("\n")
 	var result_lines = []
 	var i = 0
 	
 	while i < lines.size():
 		if i == function_data.start_index:
+			# Проверяем, есть ли комментарий над функцией
+			var comment_start = i
+			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
+				comment_start = i - 1
+				# Проверяем, есть ли пустая строка перед комментарием
+				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
+					comment_start = i - 2
+			
+			# Добавляем новый комментарий (если есть)
+			if comment.strip_edges() != "":
+				result_lines.append("")
+				result_lines.append("#" + comment)
+			
 			# Добавляем сигнатуру функции
 			result_lines.append(lines[i])
 			
@@ -772,7 +808,7 @@ func replace_function_content_in_text(content: String, function_data: Dictionary
 				else:
 					result_lines.append("")
 			
-			# Пропускаем старое содержимое функции
+			# Пропускаем старое содержимое функции и комментарий
 			i = function_data.end_index
 		else:
 			# Обычная строка, копируем как есть
@@ -991,7 +1027,15 @@ func remove_function_from_text(content: String, function_data: Dictionary) -> St
 	
 	while i < lines.size():
 		if i == function_data.start_index:
-			# Пропускаем всю функцию (от start_index до end_index)
+			# Проверяем, есть ли комментарий над функцией
+			var comment_start = i
+			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
+				comment_start = i - 1
+				# Проверяем, есть ли пустая строка перед комментарием
+				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
+					comment_start = i - 2
+			
+			# Пропускаем комментарий и функцию (от comment_start до end_index)
 			i = function_data.end_index
 		else:
 			# Обычная строка, копируем как есть
@@ -1166,3 +1210,66 @@ func remove_code_from_text(content: String, code_to_delete: String) -> String:
 	
 	# Код не найден
 	return content 
+
+func add_new_function_with_comment(name: String, args: String, code: String, comment: String):
+	if name.strip_edges() == "":
+		print("Имя функции не может быть пустым!")
+		return
+		
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var success = append_function_with_comment_to_file(file_path, name, args, code, comment)
+			
+			if success:
+				print("Функция с комментарием успешно добавлена!")
+				reload_script_in_editor(current_script)
+			else:
+				print("Ошибка при добавлении функции!")
+
+func append_function_with_comment_to_file(file_path: String, name: String, args: String, code: String, comment: String) -> bool:
+	# Читаем файл
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		return false
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	var lines = content.split("\n")
+	
+	# Добавляем пустую строку если файл не заканчивается пустой строкой
+	if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
+		lines.append("")
+	
+	# Добавляем комментарий если он есть
+	if comment.strip_edges() != "":
+		lines.append("# " + comment)
+	
+	# Формируем функцию
+	var func_header = "func " + name.strip_edges() + "(" + args.strip_edges() + "):" if args.strip_edges() != "" else "func " + name.strip_edges() + "():"
+	lines.append(func_header)
+	
+	# Добавляем код функции
+	var code_lines = code.split("\n")
+	for code_line in code_lines:
+		if code_line.strip_edges() != "":
+			lines.append("\t" + code_line)
+		else:
+			lines.append("")
+	
+	var new_content = "\n".join(lines)
+	
+	# Записываем обновленный контент
+	file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		return false
+	
+	file.store_string(new_content)
+	file.close()
+	
+	return true 
