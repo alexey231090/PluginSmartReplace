@@ -23,21 +23,67 @@ func _on_smart_replace_pressed():
 
 func show_smart_replace_dialog():
 	var dialog = AcceptDialog.new()
-	dialog.title = "Умная замена/добавление функций"
+	dialog.title = "Smart Replace - Умная замена функций"
 	dialog.size = Vector2(1000, 800)
 	
-	# Создаем контейнер
+	# Создаем основной контейнер
 	var vbox = VBoxContainer.new()
 	dialog.add_child(vbox)
+	
+	# Создаем вкладки
+	var tab_container = TabContainer.new()
+	tab_container.custom_minimum_size = Vector2(980, 700)
+	vbox.add_child(tab_container)
+	
+	# ===== ВКЛАДКА 1: JSON =====
+	var json_tab = VBoxContainer.new()
+	tab_container.add_child(json_tab)
+	tab_container.set_tab_title(0, "JSON")
+	
+	# Заголовок для JSON вкладки
+	var json_label = Label.new()
+	json_label.text = "Вставьте JSON команду от ИИ:"
+	json_tab.add_child(json_label)
+	
+	# Поле для JSON
+	var json_edit = TextEdit.new()
+	json_edit.placeholder_text = '{\n  "action": "add_function",\n  "name": "my_function",\n  "parameters": "param1, param2",\n  "code": "print(\\"Hello World!\\")"\n}'
+	json_edit.custom_minimum_size = Vector2(960, 600)
+	json_tab.add_child(json_edit)
+	
+	# Кнопки для JSON вкладки
+	var json_buttons = HBoxContainer.new()
+	json_tab.add_child(json_buttons)
+	
+	var execute_json_button = Button.new()
+	execute_json_button.text = "Выполнить JSON"
+	execute_json_button.pressed.connect(func():
+		var json_text = json_edit.text
+		# TODO: Здесь будет логика парсера JSON
+		print("JSON команда получена: ", json_text)
+	)
+	json_buttons.add_child(execute_json_button)
+	
+	var clear_json_button = Button.new()
+	clear_json_button.text = "Очистить"
+	clear_json_button.pressed.connect(func():
+		json_edit.text = ""
+	)
+	json_buttons.add_child(clear_json_button)
+	
+	# ===== ВКЛАДКА 2: РУЧНАЯ РАБОТА =====
+	var manual_tab = VBoxContainer.new()
+	tab_container.add_child(manual_tab)
+	tab_container.set_tab_title(1, "Ручная работа")
 	
 	# Создаем список функций
 	var function_label = Label.new()
 	function_label.text = "Выберите функцию для замены или выберите 'Добавить новую функцию':"
-	vbox.add_child(function_label)
+	manual_tab.add_child(function_label)
 	
 	var function_list = ItemList.new()
-	function_list.custom_minimum_size = Vector2(980, 200)
-	vbox.add_child(function_list)
+	function_list.custom_minimum_size = Vector2(960, 200)
+	manual_tab.add_child(function_list)
 	
 	# Загружаем список функций из текущего файла
 	load_functions_list(function_list)
@@ -47,30 +93,30 @@ func show_smart_replace_dialog():
 	# Поля для новой функции
 	var new_func_name_label = Label.new()
 	new_func_name_label.text = "Имя новой функции (например: my_func):"
-	vbox.add_child(new_func_name_label)
+	manual_tab.add_child(new_func_name_label)
 	var new_func_name_edit = LineEdit.new()
 	new_func_name_edit.placeholder_text = "my_func"
-	vbox.add_child(new_func_name_edit)
+	manual_tab.add_child(new_func_name_edit)
 	new_func_name_label.visible = false
 	new_func_name_edit.visible = false
 	
 	var new_func_args_label = Label.new()
 	new_func_args_label.text = "Параметры (например: a, b):"
-	vbox.add_child(new_func_args_label)
+	manual_tab.add_child(new_func_args_label)
 	var new_func_args_edit = LineEdit.new()
 	new_func_args_edit.placeholder_text = "a, b"
-	vbox.add_child(new_func_args_edit)
+	manual_tab.add_child(new_func_args_edit)
 	new_func_args_label.visible = false
 	new_func_args_edit.visible = false
 	
 	# Поле для кода
 	var new_code_label = Label.new()
 	new_code_label.text = "Код функции (только содержимое):"
-	vbox.add_child(new_code_label)
+	manual_tab.add_child(new_code_label)
 	var new_code_edit = TextEdit.new()
 	new_code_edit.placeholder_text = "Вставьте только код внутри функции (без func и отступов)"
-	new_code_edit.custom_minimum_size = Vector2(980, 200)
-	vbox.add_child(new_code_edit)
+	new_code_edit.custom_minimum_size = Vector2(960, 200)
+	manual_tab.add_child(new_code_edit)
 	
 	# Переключение видимости полей для новой функции
 	function_list.item_selected.connect(func(idx):
@@ -81,11 +127,12 @@ func show_smart_replace_dialog():
 		new_func_args_edit.visible = is_new
 	)
 	
-	# Кнопки
-	var hbox = HBoxContainer.new()
-	vbox.add_child(hbox)
+	# Кнопки для ручной работы
+	var manual_buttons = HBoxContainer.new()
+	manual_tab.add_child(manual_buttons)
+	
 	var replace_button = Button.new()
-	replace_button.text = "Выполнить"
+	replace_button.text = "Заменить/Добавить"
 	replace_button.pressed.connect(func():
 		var selected_index = function_list.get_selected_items()
 		if selected_index.size() > 0:
@@ -96,11 +143,26 @@ func show_smart_replace_dialog():
 				smart_replace_function(function_data, new_code_edit.text)
 		dialog.hide()
 	)
-	hbox.add_child(replace_button)
+	manual_buttons.add_child(replace_button)
+	
+	var delete_button = Button.new()
+	delete_button.text = "Удалить функцию"
+	delete_button.pressed.connect(func():
+		var selected_index = function_list.get_selected_items()
+		if selected_index.size() > 0:
+			var function_data = function_list.get_item_metadata(selected_index[0])
+			if not function_data.has("is_new"):
+				delete_function(function_data)
+		dialog.hide()
+	)
+	manual_buttons.add_child(delete_button)
+	
 	var cancel_button = Button.new()
 	cancel_button.text = "Отмена"
 	cancel_button.pressed.connect(func(): dialog.hide())
-	hbox.add_child(cancel_button)
+	manual_buttons.add_child(cancel_button)
+	
+	# Показываем диалог
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
 
@@ -399,4 +461,59 @@ func add_new_function(name: String, args: String, code: String):
 				return
 			file.store_string(new_content)
 			file.close()
-			print("Функция успешно добавлена!") 
+			print("Функция успешно добавлена!")
+
+func delete_function(function_data: Dictionary):
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var success = remove_function_from_file(file_path, function_data)
+			
+			if success:
+				print("Функция успешно удалена!")
+			else:
+				print("Ошибка при удалении функции!")
+
+func remove_function_from_file(file_path: String, function_data: Dictionary) -> bool:
+	# Читаем файл
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		return false
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	# Удаляем функцию
+	var new_content = remove_function_from_text(content, function_data)
+	if new_content == content:
+		return false
+	
+	# Записываем обновленный контент
+	file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		return false
+	
+	file.store_string(new_content)
+	file.close()
+	
+	return true
+
+func remove_function_from_text(content: String, function_data: Dictionary) -> String:
+	var lines = content.split("\n")
+	var result_lines = []
+	var i = 0
+	
+	while i < lines.size():
+		if i == function_data.start_index:
+			# Пропускаем всю функцию (от start_index до end_index)
+			i = function_data.end_index
+		else:
+			# Обычная строка, копируем как есть
+			result_lines.append(lines[i])
+			i += 1
+	
+	return "\n".join(result_lines) 

@@ -5,5 +5,8 @@ func _ready():
 func test_function():
 	return true 
 
-func avto_complit(num):
-	return num
+func move_pers():
+	print("Hello")
+
+func Gomy(num):
+	pass
