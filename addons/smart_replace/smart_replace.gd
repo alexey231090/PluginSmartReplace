@@ -119,6 +119,23 @@ func handle_add_code(data: Dictionary) -> bool:
 	var position = data.get("position", 0)  # По умолчанию в конец
 	var line_number = data.get("line_number", 1)
 	
+	# Поддержка текстовых значений позиции
+	if data.has("position_type"):
+		var position_type = data.position_type
+		match position_type:
+			"end":
+				position = 0
+			"start":
+				position = 1
+			"after_extends":
+				position = 2
+			"before_extends":
+				position = 3
+			"specific_line":
+				position = 4
+				if data.has("line_number"):
+					line_number = data.line_number
+	
 	add_code_to_file(code, position, line_number)
 	return true
 
@@ -275,6 +292,23 @@ func generate_add_code_preview(data: Dictionary) -> String:
 	var position = data.get("position", 0)
 	var line_number = data.get("line_number", 1)
 	
+	# Поддержка текстовых значений позиции
+	if data.has("position_type"):
+		var position_type = data.position_type
+		match position_type:
+			"end":
+				position = 0
+			"start":
+				position = 1
+			"after_extends":
+				position = 2
+			"before_extends":
+				position = 3
+			"specific_line":
+				position = 4
+				if data.has("line_number"):
+					line_number = data.line_number
+	
 	var position_names = ["в конец файла", "в начало файла", "после extends", "перед extends", "на строку " + str(line_number)]
 	
 	var preview = "➕ ДОБАВИТЬ КОД:\n"
@@ -382,7 +416,7 @@ func show_smart_replace_dialog_v2():
 	
 	# Поле для JSON
 	var json_edit = TextEdit.new()
-	json_edit.placeholder_text = '// Примеры JSON команд:\n\n// Добавить функцию:\n{\n  "action": "add_function",\n  "name": "move_player",\n  "parameters": "direction, speed",\n  "code": "position += direction * speed * delta"\n}\n\n// Заменить функцию:\n{\n  "action": "replace_function",\n  "signature": "func _ready():",\n  "code": "print(\\"Game started!\\")\\nsetup_player()"\n}\n\n// Добавить код:\n{\n  "action": "add_code",\n  "code": "var player_health = 100",\n  "position": 2\n}\n\n// Удалить код:\n{\n  "action": "delete_code",\n  "code": "var old_variable = 10"\n}'
+	json_edit.placeholder_text = '// Примеры JSON команд:\n\n// Добавить функцию:\n{\n  "action": "add_function",\n  "name": "move_player",\n  "parameters": "direction, speed",\n  "code": "position += direction * speed * delta"\n}\n\n// Заменить функцию:\n{\n  "action": "replace_function",\n  "signature": "func _ready():",\n  "code": "print(\\"Game started!\\")\\nsetup_player()"\n}\n\n// Добавить код в конец файла:\n{\n  "action": "add_code",\n  "code": "var player_health = 100",\n  "position_type": "end"\n}\n\n// Добавить код в начало файла:\n{\n  "action": "add_code",\n  "code": "@tool",\n  "position_type": "start"\n}\n\n// Добавить код после extends:\n{\n  "action": "add_code",\n  "code": "var player_speed = 5.0",\n  "position_type": "after_extends"\n}\n\n// Добавить код на конкретную строку:\n{\n  "action": "add_code",\n  "code": "var test_var = 42",\n  "position_type": "specific_line",\n  "line_number": 10\n}\n\n// Удалить код:\n{\n  "action": "delete_code",\n  "code": "var old_variable = 10"\n}'
 	json_edit.custom_minimum_size = Vector2(960, 600)
 	json_tab.add_child(json_edit)
 	
