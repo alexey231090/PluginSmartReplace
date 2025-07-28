@@ -5,8 +5,8 @@ func _ready():
 func test_function():
 	return true 
 
-func move_pers():
-	print("Hello")
+func dgsgeseg():
+	pass
 
-func Gomy(num):
+func dwaddwawda():
 	pass

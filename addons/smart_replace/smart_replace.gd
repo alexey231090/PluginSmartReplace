@@ -132,7 +132,7 @@ func show_smart_replace_dialog():
 	manual_tab.add_child(manual_buttons)
 	
 	var replace_button = Button.new()
-	replace_button.text = "Заменить/Добавить"
+	replace_button.text = "Применить"
 	replace_button.pressed.connect(func():
 		var selected_index = function_list.get_selected_items()
 		if selected_index.size() > 0:
@@ -247,6 +247,8 @@ func smart_replace_function(function_data: Dictionary, new_code: String):
 			
 			if success:
 				print("Функция успешно заменена!")
+				# Автоматически перезагружаем файл в редакторе
+				reload_script_in_editor(current_script)
 			else:
 				print("Ошибка при замене функции!")
 
@@ -442,7 +444,7 @@ func add_new_function(name: String, args: String, code: String):
 			file.close()
 			var lines = content.split("\n")
 			# Формируем функцию
-			var func_header = "func " + name.strip_edges() + "(" + args.strip_edges() + "):" if args.strip_edges() != "" else "func " + name.strip_edges() + ":"
+			var func_header = "func " + name.strip_edges() + "(" + args.strip_edges() + "):" if args.strip_edges() != "" else "func " + name.strip_edges() + "():"
 			var func_lines = [func_header]
 			for code_line in code.split("\n"):
 				if code_line.strip_edges() != "":
@@ -462,6 +464,8 @@ func add_new_function(name: String, args: String, code: String):
 			file.store_string(new_content)
 			file.close()
 			print("Функция успешно добавлена!")
+			# Автоматически перезагружаем файл в редакторе
+			reload_script_in_editor(current_script)
 
 func delete_function(function_data: Dictionary):
 	var editor_interface = get_editor_interface()
@@ -475,6 +479,8 @@ func delete_function(function_data: Dictionary):
 			
 			if success:
 				print("Функция успешно удалена!")
+				# Автоматически перезагружаем файл в редакторе
+				reload_script_in_editor(current_script)
 			else:
 				print("Ошибка при удалении функции!")
 
@@ -517,3 +523,18 @@ func remove_function_from_text(content: String, function_data: Dictionary) -> St
 			i += 1
 	
 	return "\n".join(result_lines) 
+
+func reload_script_in_editor(script: Script):
+	# Перезагружаем скрипт в редакторе
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	
+	if script_editor:
+		# Принудительно обновляем скрипт
+		script.take_over_path(script.resource_path)
+		
+		# Обновляем редактор
+		editor_interface.get_resource_filesystem().scan()
+		
+		# Файл обновлен
+		pass 
