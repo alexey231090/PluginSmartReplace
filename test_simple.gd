@@ -1,5 +1,4 @@
 extends Node
-var num2 = 1234
 var givmy_lol_pass = 34.2
 
 
@@ -13,3 +12,5 @@ func dgsgeseg():
 
 func dwaddwawda():
 	pass
+
+var player_name = 'Player1'

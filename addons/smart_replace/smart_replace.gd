@@ -29,11 +29,15 @@ func execute_json_command(json_text: String):
 		print("JSON команда не может быть пустой!")
 		return
 	
+	# Очищаем JSON от комментариев и лишних символов
+	var clean_json = clean_json_text(json_text)
+	
 	var json = JSON.new()
-	var parse_result = json.parse(json_text)
+	var parse_result = json.parse(clean_json)
 	
 	if parse_result != OK:
 		print("Ошибка парсинга JSON: ", json.get_error_message())
+		print("Проверьте синтаксис JSON!")
 		return
 	
 	var data = json.data
@@ -144,16 +148,33 @@ func find_function_by_signature(signature: String) -> Dictionary:
 	# Возвращаем пустой Dictionary вместо null
 	return {}
 
+func clean_json_text(json_text: String) -> String:
+	# Удаляем комментарии и лишние символы
+	var lines = json_text.split("\n")
+	var clean_lines = []
+	
+	for line in lines:
+		var clean_line = line.strip_edges()
+		# Пропускаем пустые строки и комментарии
+		if clean_line != "" and not clean_line.begins_with("//"):
+			clean_lines.append(clean_line)
+	
+	return "\n".join(clean_lines)
+
 func show_json_preview(json_text: String):
 	if json_text.strip_edges() == "":
 		print("JSON команда не может быть пустой!")
 		return
 	
+	# Очищаем JSON от комментариев и лишних символов
+	var clean_json = clean_json_text(json_text)
+	
 	var json = JSON.new()
-	var parse_result = json.parse(json_text)
+	var parse_result = json.parse(clean_json)
 	
 	if parse_result != OK:
 		print("Ошибка парсинга JSON: ", json.get_error_message())
+		print("Проверьте синтаксис JSON!")
 		return
 	
 	var data = json.data
@@ -289,6 +310,9 @@ func generate_delete_code_preview(data: Dictionary) -> String:
 	return preview
 
 func show_preview_dialog(preview_text: String, json_text: String):
+	# Закрываем все существующие диалоги
+	close_all_dialogs()
+	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Предварительный просмотр изменений"
 	dialog.size = Vector2(800, 600)
@@ -324,6 +348,13 @@ func show_preview_dialog(preview_text: String, json_text: String):
 	
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
+
+func close_all_dialogs():
+	# Закрываем все диалоги AcceptDialog
+	var base_control = get_editor_interface().get_base_control()
+	for child in base_control.get_children():
+		if child is AcceptDialog:
+			child.hide()
 
 func show_smart_replace_dialog_v2():
 	var dialog = AcceptDialog.new()
