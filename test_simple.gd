@@ -13,4 +13,6 @@ func _ready():
 func move_player(direction, speed):
 	print("Player moved!")
 
-# Уменьшает здоровье игрока
+#Теперь функция foo принимает 5 параметров
+func foo(a, b, c, d, e):
+	print(a, b, c, d, e)

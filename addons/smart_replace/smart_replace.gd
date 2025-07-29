@@ -100,33 +100,41 @@ func handle_add_function(data: Dictionary) -> bool:
 	return true
 
 func handle_replace_function(data: Dictionary) -> bool:
-	if not data.has("signature") or not data.has("code"):
-		print("Для замены функции нужны поля 'signature' и 'code'!")
+	var function_data = {}
+	if data.has("signature"):
+		function_data = find_function_by_signature(data.signature)
+	elif data.has("name"):
+		function_data = find_function_by_name(data.name)
+	else:
+		print("Для замены функции нужно поле 'signature' или 'name'!")
 		return false
-	
-	var signature = data.signature
-	var code = data.code
-	var comment = data.get("comment", "")  # Новый комментарий (пустой = удалить старый)
-	
-	var function_data = find_function_by_signature(signature)
 	if function_data.is_empty():
-		print("Функция с сигнатурой '", signature, "' не найдена!")
+		print("Функция не найдена!")
 		return false
-	
-	smart_replace_function_with_comment(function_data, code, comment)
+	if not data.has("code"):
+		print("Для замены функции нужно поле 'code'!")
+		return false
+	var code = data.code
+	var comment = data.get("comment", "")
+	var new_signature = data.get("new_signature", "")
+	if new_signature.strip_edges() != "":
+		smart_replace_function_with_new_signature(function_data, code, comment, new_signature)
+	else:
+		smart_replace_function_with_comment(function_data, code, comment)
 	return true
 
 func handle_delete_function(data: Dictionary) -> bool:
-	if not data.has("signature"):
-		print("Для удаления функции нужно поле 'signature'!")
+	var function_data = {}
+	if data.has("signature"):
+		function_data = find_function_by_signature(data.signature)
+	elif data.has("name"):
+		function_data = find_function_by_name(data.name)
+	else:
+		print("Для удаления функции нужно поле 'signature' или 'name'!")
 		return false
-	
-	var signature = data.signature
-	var function_data = find_function_by_signature(signature)
 	if function_data.is_empty():
-		print("Функция с сигнатурой '", signature, "' не найдена!")
+		print("Функция не найдена!")
 		return false
-	
 	delete_function(function_data)
 	return true
 
@@ -183,6 +191,20 @@ func find_function_by_signature(signature: String) -> Dictionary:
 					return func_data
 	
 	# Возвращаем пустой Dictionary вместо null
+	return {}
+
+# Новый поиск функции по имени
+func find_function_by_name(name: String) -> Dictionary:
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var functions = find_functions_in_file(file_path)
+			for func_data in functions:
+				if func_data.signature.begins_with("func " + name + "("):
+					return func_data
 	return {}
 
 func clean_json_text(json_text: String) -> String:
@@ -258,52 +280,58 @@ func generate_add_function_preview(data: Dictionary) -> String:
 	return preview
 
 func generate_replace_function_preview(data: Dictionary) -> String:
-	if not data.has("signature") or not data.has("code"):
-		return "❌ Ошибка: Для замены функции нужны поля 'signature' и 'code'!"
-	
-	var signature = data.signature
+	var signature = ""
+	var function_data = {}
+	if data.has("signature"):
+		signature = data.signature
+		function_data = find_function_by_signature(signature)
+	elif data.has("name"):
+		function_data = find_function_by_name(data.name)
+		if not function_data.is_empty():
+			signature = function_data.signature
+	else:
+		return "❌ Ошибка: Для замены функции нужно поле 'signature' или 'name'!"
+	if function_data.is_empty():
+		return "❌ Функция с именем/сигнатурой '" + (data.get("name", signature)) + "' не найдена!"
 	var code = data.code
 	var comment = data.get("comment", "")
-	var function_data = find_function_by_signature(signature)
-	
-	if function_data.is_empty():
-		return "❌ Функция с сигнатурой '" + signature + "' не найдена!"
-	
+	var new_signature = data.get("new_signature", "")
 	var preview = "🔄 ЗАМЕНИТЬ ФУНКЦИЮ:\n"
-	preview += "📝 Сигнатура: " + signature + "\n"
+	preview += "📝 Текущая сигнатура: " + signature + "\n"
+	if new_signature.strip_edges() != "":
+		preview += "➡️ Новая сигнатура: " + new_signature + "\n"
 	preview += "📍 Строка: " + str(function_data.line) + "\n"
-	
 	if comment.strip_edges() != "":
 		preview += "💬 Новый комментарий: " + comment + "\n"
-	else:
-		preview += "🗑️ Старый комментарий будет удален\n"
-	
 	preview += "📄 Новый код:\n"
-	
 	var code_lines = code.split("\n")
 	for line in code_lines:
 		if line.strip_edges() != "":
 			preview += "   " + line + "\n"
 		else:
 			preview += "\n"
-	
 	return preview
 
 func generate_delete_function_preview(data: Dictionary) -> String:
-	if not data.has("signature"):
-		return "❌ Ошибка: Для удаления функции нужно поле 'signature'!"
-	
-	var signature = data.signature
-	var function_data = find_function_by_signature(signature)
+	var signature = ""
+	var function_data = {}
+	if data.has("signature"):
+		signature = data.signature
+		function_data = find_function_by_signature(signature)
+	elif data.has("name"):
+		function_data = find_function_by_name(data.name)
+		if not function_data.is_empty():
+			signature = function_data.signature
+	else:
+		return "❌ Ошибка: Для удаления функции нужно поле 'signature' или 'name'!"
 	
 	if function_data.is_empty():
-		return "❌ Функция с сигнатурой '" + signature + "' не найдена!"
+		return "❌ Функция с именем/сигнатурой '" + (data.get("name", signature)) + "' не найдена!"
 	
 	var preview = "🗑️ УДАЛИТЬ ФУНКЦИЮ:\n"
 	preview += "📝 Сигнатура: " + signature + "\n"
 	preview += "📍 Строка: " + str(function_data.line) + "\n"
 	preview += "⚠️ Внимание: Функция и комментарий над ней будут удалены!"
-	
 	return preview
 
 func generate_add_code_preview(data: Dictionary) -> String:
@@ -1280,3 +1308,68 @@ func find_extends_line(lines: Array) -> int:
 		if line.begins_with("extends "):
 			return i
 	return -1  # extends не найден 
+
+func smart_replace_function_with_new_signature(function_data: Dictionary, new_code: String, comment: String, new_signature: String):
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var success = replace_function_content_with_new_signature(file_path, function_data, new_code, comment, new_signature)
+			if success:
+				print("Функция успешно заменена с новой сигнатурой!")
+			else:
+				print("Ошибка при замене функции!")
+
+func replace_function_content_with_new_signature(file_path: String, function_data: Dictionary, new_code: String, comment: String, new_signature: String) -> bool:
+	# Читаем файл
+	var file = FileAccess.open(file_path, FileAccess.READ)
+	if not file:
+		return false
+	var content = file.get_as_text()
+	file.close()
+	# Заменяем содержимое функции и сигнатуру
+	var new_content = replace_function_content_with_new_signature_in_text(content, function_data, new_code, comment, new_signature)
+	if new_content == content:
+		return false
+	# Записываем обновленный контент
+	file = FileAccess.open(file_path, FileAccess.WRITE)
+	if not file:
+		return false
+	file.store_string(new_content)
+	file.close()
+	return true
+
+func replace_function_content_with_new_signature_in_text(content: String, function_data: Dictionary, new_code: String, comment: String, new_signature: String) -> String:
+	var lines = content.split("\n")
+	var result_lines = []
+	var i = 0
+	while i < lines.size():
+		if i == function_data.start_index:
+			# Проверяем, есть ли комментарий над функцией
+			var comment_start = i
+			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
+				comment_start = i - 1
+				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
+					comment_start = i - 2
+			# Добавляем новый комментарий (если есть)
+			if comment.strip_edges() != "":
+				result_lines.append("")
+				result_lines.append("#" + comment)
+			# Добавляем новую сигнатуру функции
+			result_lines.append(new_signature)
+			# Добавляем новый код с правильными отступами
+			var indent = get_indentation(new_signature)
+			var new_code_lines = new_code.split("\n")
+			for code_line in new_code_lines:
+				if code_line.strip_edges() != "":
+					result_lines.append(indent + "\t" + code_line)
+				else:
+					result_lines.append("")
+			# Пропускаем старое содержимое функции и комментарий
+			i = function_data.end_index
+		else:
+			result_lines.append(lines[i])
+			i += 1
+	return "\n".join(result_lines) 
