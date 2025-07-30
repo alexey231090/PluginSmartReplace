@@ -22,47 +22,133 @@ func _on_smart_replace_pressed():
 	print("Кнопка нажата!")
 	show_smart_replace_dialog_v2()
 
-# ===== JSON ПАРСЕР ФУНКЦИИ =====
+# ===== INI ПАРСЕР ФУНКЦИИ =====
 
-func execute_json_command(json_text: String):
-	if json_text.strip_edges() == "":
-		print("JSON команда не может быть пустой!")
+func execute_ini_command(ini_text: String):
+	if ini_text.strip_edges() == "":
+		print("INI команда не может быть пустой!")
 		return
 	
-	# Очищаем JSON от комментариев и лишних символов
-	var clean_json = clean_json_text(json_text)
-	
-	var json = JSON.new()
-	var parse_result = json.parse(clean_json)
-	if parse_result != OK:
-		print("Ошибка парсинга JSON: ", json.get_error_message())
-		print("Проверьте синтаксис JSON!")
+	# Парсим INI текст
+	var commands = parse_ini_text(ini_text)
+	if commands.is_empty():
+		print("Не удалось распарсить INI команды!")
 		return
 	
-	var data = json.data
-	if typeof(data) == TYPE_ARRAY:
-		# Batch-режим: массив команд
-		var all_success = true
-		for cmd in data:
-			if not cmd.has("action"):
-				print("Одна из команд не содержит поле 'action'!")
-				all_success = false
-				continue
-			var ok = execute_json_single(cmd)
-			if not ok:
-				all_success = false
-		if all_success:
-			print("Все JSON команды выполнены успешно!")
-		else:
-			print("Некоторые JSON команды завершились с ошибкой!")
-		return
+	# Выполняем команды
+	var all_success = true
+	for cmd in commands:
+		var ok = execute_ini_single(cmd)
+		if not ok:
+			all_success = false
+	
+	if all_success:
+		print("Все INI команды выполнены успешно!")
 	else:
-		# Одиночная команда
-		execute_json_single(data)
+		print("Некоторые INI команды завершились с ошибкой!")
 
-func execute_json_single(data: Dictionary) -> bool:
+func parse_ini_text(ini_text: String) -> Array:
+	var commands = []
+	var lines = ini_text.split("\n")
+	var current_command = {}
+	var current_section = ""
+	var in_command_block = false
+	var in_code_block = false
+	var current_code_lines = []
+	
+	for i in range(lines.size()):
+		var line = lines[i]
+		var stripped_line = line.strip_edges()
+		
+		# Проверяем маркеры начала и конца команды
+		if stripped_line == "=[command]=":
+			# Начало блока команд
+			in_command_block = true
+			in_code_block = false
+			current_code_lines.clear()
+			continue
+		elif stripped_line == "=[end]=":
+			# Конец блока команд
+			if in_code_block and current_code_lines.size() > 0:
+				# Нормализуем отступы перед сохранением кода
+				var normalized_code = normalize_indentation(current_code_lines)
+				current_command["code"] = "\n".join(normalized_code)
+			if not current_command.is_empty():
+				commands.append(current_command)
+			in_command_block = false
+			in_code_block = false
+			current_command = {}
+			current_code_lines.clear()
+			continue
+		
+		# Если не в блоке команд, пропускаем
+		if not in_command_block:
+			continue
+		
+		if stripped_line.is_empty() or stripped_line.begins_with("#"):
+			continue
+		
+		# Новая секция [action]
+		if stripped_line.begins_with("[") and stripped_line.ends_with("]"):
+			# Сохраняем предыдущую команду
+			if in_code_block and current_code_lines.size() > 0:
+				# Нормализуем отступы перед сохранением кода
+				var normalized_code = normalize_indentation(current_code_lines)
+				current_command["code"] = "\n".join(normalized_code)
+			if not current_command.is_empty():
+				commands.append(current_command)
+			
+			# Начинаем новую команду
+			current_section = stripped_line.substr(1, stripped_line.length() - 2)
+			current_command = {"action": current_section}
+			in_code_block = false
+			current_code_lines.clear()
+			continue
+		
+		# Проверяем маркеры кода
+		if stripped_line == "<cod>":
+			in_code_block = true
+			continue
+		elif stripped_line == "<end_cod>":
+			in_code_block = false
+			if current_code_lines.size() > 0:
+				# Нормализуем отступы перед сохранением кода
+				var normalized_code = normalize_indentation(current_code_lines)
+				current_command["code"] = "\n".join(normalized_code)
+			current_code_lines.clear()
+			continue
+		
+		# Если в блоке кода, добавляем строку
+		if in_code_block:
+			current_code_lines.append(line)
+			continue
+		
+		# Параметр = значение (только если не в блоке кода)
+		if "=" in stripped_line:
+			var parts = stripped_line.split("=", true, 1)
+			var key = parts[0].strip_edges()
+			var value = parts[1].strip_edges()
+			
+			# Обрабатываем экранированные символы
+			value = value.replace("\\n", "\n")
+			value = value.replace("\\t", "\t")
+			value = value.replace("\\\"", "\"")
+			
+			current_command[key] = value
+	
+	# Добавляем последнюю команду
+	if in_code_block and current_code_lines.size() > 0:
+		# Нормализуем отступы перед сохранением кода
+		var normalized_code = normalize_indentation(current_code_lines)
+		current_command["code"] = "\n".join(normalized_code)
+	if not current_command.is_empty():
+		commands.append(current_command)
+	
+	return commands
+
+func execute_ini_single(data: Dictionary) -> bool:
 	if not data.has("action"):
-		print("JSON должен содержать поле 'action'!")
+		print("INI команда должна содержать секцию [action]!")
 		return false
 	var action = data.action
 	var success = false
@@ -81,10 +167,12 @@ func execute_json_single(data: Dictionary) -> bool:
 			print("Неизвестное действие: ", action)
 			return false
 	if success:
-		print("JSON команда выполнена успешно!")
+		print("INI команда выполнена успешно!")
 	else:
-		print("Ошибка при выполнении JSON команды!")
+		print("Ошибка при выполнении INI команды!")
 	return success
+
+
 
 func handle_add_function(data: Dictionary) -> bool:
 	if not data.has("name") or not data.has("code"):
@@ -168,12 +256,12 @@ func handle_add_code(data: Dictionary) -> bool:
 	return true
 
 func handle_delete_code(data: Dictionary) -> bool:
-	if not data.has("code"):
-		print("Для удаления кода нужно поле 'code'!")
+	if not data.has("lines"):
+		print("Для удаления кода нужно поле 'lines' с номерами строк!")
 		return false
 	
-	var code = data.code
-	delete_code_from_file(code)
+	var lines_param = data.lines
+	delete_lines_from_file(lines_param)
 	return true
 
 func find_function_by_signature(signature: String) -> Dictionary:
@@ -207,48 +295,27 @@ func find_function_by_name(name: String) -> Dictionary:
 					return func_data
 	return {}
 
-func clean_json_text(json_text: String) -> String:
-	# Удаляем комментарии и лишние символы
-	var lines = json_text.split("\n")
-	var clean_lines = []
-	
-	for line in lines:
-		var clean_line = line.strip_edges()
-		# Пропускаем пустые строки и комментарии
-		if clean_line != "" and not clean_line.begins_with("//"):
-			clean_lines.append(clean_line)
-	
-	return "\n".join(clean_lines)
-
-func show_json_preview(json_text: String):
-	if json_text.strip_edges() == "":
-		print("JSON команда не может быть пустой!")
+func show_ini_preview(ini_text: String):
+	if ini_text.strip_edges() == "":
+		print("INI команда не может быть пустой!")
 		return
 	
-	# Очищаем JSON от комментариев и лишних символов
-	var clean_json = clean_json_text(json_text)
-	
-	var json = JSON.new()
-	var parse_result = json.parse(clean_json)
-	if parse_result != OK:
-		print("Ошибка парсинга JSON: ", json.get_error_message())
-		print("Проверьте синтаксис JSON!")
+	# Парсим INI текст
+	var commands = parse_ini_text(ini_text)
+	if commands.is_empty():
+		print("Не удалось распарсить INI команды!")
 		return
 	
-	var data = json.data
 	var preview_text = ""
-	if typeof(data) == TYPE_ARRAY:
-		# Batch-режим: массив команд
-		for idx in range(data.size()):
-			var cmd = data[idx]
-			if not cmd.has("action"):
-				preview_text += "❌ Команда #" + str(idx+1) + ": нет поля 'action'\n"
-				continue
-			preview_text += "--- Команда #" + str(idx+1) + " ---\n"
-			preview_text += generate_preview_for_single(cmd) + "\n"
-	else:
-		preview_text = generate_preview_for_single(data)
-	show_preview_dialog(preview_text, json_text)
+	for idx in range(commands.size()):
+		var cmd = commands[idx]
+		if not cmd.has("action"):
+			preview_text += "❌ Команда #" + str(idx+1) + ": нет секции [action]\n"
+			continue
+		preview_text += "--- Команда #" + str(idx+1) + " ---\n"
+		preview_text += generate_preview_for_single(cmd) + "\n"
+	
+	show_preview_dialog(preview_text, ini_text)
 
 func generate_add_function_preview(data: Dictionary) -> String:
 	if not data.has("name") or not data.has("code"):
@@ -375,31 +442,39 @@ func generate_add_code_preview(data: Dictionary) -> String:
 	return preview
 
 func generate_delete_code_preview(data: Dictionary) -> String:
-	if not data.has("code"):
-		return "❌ Ошибка: Для удаления кода нужно поле 'code'!"
+	if not data.has("lines"):
+		return "❌ Ошибка: Для удаления кода нужно поле 'lines' с номерами строк!"
 	
-	var code = data.code
+	var lines_param = data.lines
 	
-	var preview = "🗑️ УДАЛИТЬ КОД:\n"
-	preview += "📄 Код для удаления:\n"
+	var preview = "🗑️ УДАЛИТЬ СТРОКИ:\n"
+	preview += "📄 Строки для удаления: " + lines_param + "\n"
 	
-	var code_lines = code.split("\n")
-	for line in code_lines:
-		if line.strip_edges() != "":
-			preview += "   " + line + "\n"
+	# Парсим и показываем какие строки будут удалены
+	var parts = lines_param.split(",")
+	for part in parts:
+		part = part.strip_edges()
+		if "-" in part:
+			# Диапазон строк
+			var range_parts = part.split("-")
+			if range_parts.size() == 2:
+				var start_line = range_parts[0].strip_edges()
+				var end_line = range_parts[1].strip_edges()
+				preview += "   Строки " + start_line + " - " + end_line + "\n"
 		else:
-			preview += "\n"
+			# Отдельная строка
+			preview += "   Строка " + part + "\n"
 	
-	preview += "⚠️ Внимание: Точное совпадение кода будет удалено!"
+	preview += "⚠️ Внимание: Указанные строки будут удалены!"
 	return preview
 
-func show_preview_dialog(preview_text: String, json_text: String):
+func show_preview_dialog(preview_text: String, ini_text: String):
 	# Закрываем все существующие диалоги
 	close_all_dialogs()
 	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Предварительный просмотр изменений"
-	dialog.size = Vector2(800, 600)
+	dialog.size = Vector2(800, 700)
 	
 	var vbox = VBoxContainer.new()
 	dialog.add_child(vbox)
@@ -414,16 +489,40 @@ func show_preview_dialog(preview_text: String, json_text: String):
 	preview_edit.custom_minimum_size = Vector2(780, 400)
 	vbox.add_child(preview_edit)
 	
+	# Проверяем отступы в коде
+	var indent_issues = check_indentation_issues(ini_text)
+	var indent_warning = Label.new()
+	if indent_issues.length() > 0:
+		indent_warning.text = "⚠️ Обнаружены проблемы с отступами в коде!"
+		indent_warning.add_theme_color_override("font_color", Color.YELLOW)
+		vbox.add_child(indent_warning)
+		
+		var indent_details = TextEdit.new()
+		indent_details.text = indent_issues
+		indent_details.editable = false
+		indent_details.custom_minimum_size = Vector2(780, 100)
+		vbox.add_child(indent_details)
+	
 	var buttons = HBoxContainer.new()
 	vbox.add_child(buttons)
 	
 	var apply_button = Button.new()
 	apply_button.text = "Применить изменения"
 	apply_button.pressed.connect(func():
-		execute_json_command(json_text)
+		execute_ini_command(ini_text)
 		dialog.hide()
 	)
 	buttons.add_child(apply_button)
+	
+	if indent_issues.length() > 0:
+		var fix_indent_button = Button.new()
+		fix_indent_button.text = "Исправить отступы"
+		fix_indent_button.pressed.connect(func():
+			var fixed_ini = fix_indentation_in_ini(ini_text)
+			show_preview_dialog(generate_preview_for_ini(fixed_ini), fixed_ini)
+			dialog.hide()
+		)
+		buttons.add_child(fix_indent_button)
 	
 	var cancel_button = Button.new()
 	cancel_button.text = "Отмена"
@@ -440,6 +539,190 @@ func close_all_dialogs():
 		if child is AcceptDialog:
 			child.hide()
 
+func check_indentation_issues(ini_text: String) -> String:
+	var issues = []
+	var lines = ini_text.split("\n")
+	var in_code_block = false
+	var code_lines = []
+	var code_start_line = 0
+	
+	for i in range(lines.size()):
+		var line = lines[i]
+		var stripped_line = line.strip_edges()
+		
+		if stripped_line == "<cod>":
+			in_code_block = true
+			code_lines.clear()
+			code_start_line = i + 1
+			continue
+		elif stripped_line == "<end_cod>":
+			in_code_block = false
+			# Проверяем код на проблемы с отступами
+			var code_issues = analyze_code_indentation(code_lines, code_start_line)
+			if code_issues.size() > 0:
+				issues.append_array(code_issues)
+			continue
+		
+		if in_code_block:
+			code_lines.append(line)
+	
+	if issues.size() == 0:
+		return ""
+	
+	return "\n".join(issues)
+
+func analyze_code_indentation(code_lines: Array, start_line: int) -> Array:
+	var issues = []
+	var expected_indent = 0
+	
+	for i in range(code_lines.size()):
+		var line = code_lines[i]
+		var stripped_line = line.strip_edges()
+		
+		if stripped_line.is_empty():
+			continue
+		
+		# Проверяем, начинается ли строка с правильного отступа
+		var actual_indent = get_line_indent_level(line)
+		
+		# Если строка должна быть вложенной (после двоеточия)
+		if i > 0 and code_lines[i-1].strip_edges().ends_with(":"):
+			expected_indent += 1
+		
+		# Если строка не имеет отступа, но должна
+		if actual_indent == 0 and expected_indent > 0:
+			issues.append("Строка " + str(start_line + i + 1) + ": ожидается отступ " + str(expected_indent * 4) + " пробелов")
+		
+		# Если строка имеет отступ, но не должна
+		if actual_indent > 0 and expected_indent == 0:
+			issues.append("Строка " + str(start_line + i + 1) + ": лишний отступ")
+		
+		# Сбрасываем ожидаемый отступ для новых блоков
+		if stripped_line.begins_with("if ") or stripped_line.begins_with("for ") or stripped_line.begins_with("while ") or stripped_line.begins_with("def ") or stripped_line.begins_with("func "):
+			expected_indent = 0
+	
+	return issues
+
+func get_line_indent_level(line: String) -> int:
+	var indent = 0
+	for i in range(line.length()):
+		if line[i] == " ":
+			indent += 1
+		elif line[i] == "\t":
+			indent += 4
+		else:
+			break
+	return indent / 4
+
+func fix_indentation_in_ini(ini_text: String) -> String:
+	var lines = ini_text.split("\n")
+	var result_lines = []
+	var in_code_block = false
+	var code_lines = []
+	var code_start_index = 0
+	
+	for i in range(lines.size()):
+		var line = lines[i]
+		var stripped_line = line.strip_edges()
+		
+		if stripped_line == "<cod>":
+			in_code_block = true
+			code_lines.clear()
+			code_start_index = result_lines.size()
+			result_lines.append(line)
+			continue
+		elif stripped_line == "<end_cod>":
+			in_code_block = false
+			# Нормализуем отступы (заменяем табуляции на пробелы)
+			var normalized_code = normalize_indentation(code_lines)
+			# Исправляем отступы в коде
+			var fixed_code = fix_code_indentation(normalized_code)
+			result_lines.append_array(fixed_code)
+			result_lines.append(line)
+			continue
+		
+		if in_code_block:
+			code_lines.append(line)
+		else:
+			result_lines.append(line)
+	
+	return "\n".join(result_lines)
+
+func normalize_indentation(code_lines: Array) -> Array:
+	var result = []
+	for line in code_lines:
+		var normalized_line = ""
+		var in_indent = true
+		var indent_count = 0
+		
+		for i in range(line.length()):
+			var char = line[i]
+			if in_indent:
+				if char == " ":
+					indent_count += 1
+				elif char == "\t":
+					indent_count += 4
+				else:
+					in_indent = false
+					# Добавляем нормализованный отступ
+					for j in range(indent_count):
+						normalized_line += " "
+					normalized_line += char
+			else:
+				normalized_line += char
+		
+		# Если строка состояла только из отступов
+		if in_indent:
+			for j in range(indent_count):
+				normalized_line += " "
+		
+		result.append(normalized_line)
+	
+	return result
+
+func fix_code_indentation(code_lines: Array) -> Array:
+	var result = []
+	var indent_level = 0
+	
+	for line in code_lines:
+		var stripped_line = line.strip_edges()
+		
+		if stripped_line.is_empty():
+			result.append("")
+			continue
+		
+		# Уменьшаем отступ для строк, которые не должны быть вложенными
+		if stripped_line.begins_with("else:") or stripped_line.begins_with("elif "):
+			indent_level = max(0, indent_level - 1)
+		
+		# Добавляем правильный отступ (только пробелы, без табуляций)
+		var indent = ""
+		for i in range(indent_level * 4):
+			indent += " "
+		result.append(indent + stripped_line)
+		
+		# Увеличиваем отступ для строк с двоеточием
+		if stripped_line.ends_with(":"):
+			indent_level += 1
+	
+	return result
+
+func generate_preview_for_ini(ini_text: String) -> String:
+	var commands = parse_ini_text(ini_text)
+	if commands.is_empty():
+		return "Не удалось распарсить INI команды!"
+	
+	var preview_text = ""
+	for idx in range(commands.size()):
+		var cmd = commands[idx]
+		if not cmd.has("action"):
+			preview_text += "❌ Команда #" + str(idx+1) + ": нет секции [action]\n"
+			continue
+		preview_text += "--- Команда #" + str(idx+1) + " ---\n"
+		preview_text += generate_preview_for_single(cmd) + "\n"
+	
+	return preview_text
+
 func show_smart_replace_dialog_v2():
 	var dialog = AcceptDialog.new()
 	dialog.title = "Smart Replace - Умная замена функций"
@@ -454,48 +737,48 @@ func show_smart_replace_dialog_v2():
 	tab_container.custom_minimum_size = Vector2(980, 700)
 	vbox.add_child(tab_container)
 	
-	# ===== ВКЛАДКА 1: JSON =====
-	var json_tab = VBoxContainer.new()
-	tab_container.add_child(json_tab)
-	tab_container.set_tab_title(0, "JSON")
+	# ===== ВКЛАДКА 1: INI =====
+	var ini_tab = VBoxContainer.new()
+	tab_container.add_child(ini_tab)
+	tab_container.set_tab_title(0, "INI")
 	
-	# Заголовок для JSON вкладки
-	var json_label = Label.new()
-	json_label.text = "Вставьте JSON команду от ИИ:"
-	json_tab.add_child(json_label)
+	# Заголовок для INI вкладки
+	var ini_label = Label.new()
+	ini_label.text = "Вставьте INI команду от ИИ:"
+	ini_tab.add_child(ini_label)
 	
-	# Поле для JSON
-	var json_edit = TextEdit.new()
-	json_edit.placeholder_text = '// Примеры JSON команд:\n\n// Добавить функцию:\n{\n  "action": "add_function",\n  "name": "move_player",\n  "parameters": "direction, speed",\n  "code": "position += direction * speed * delta"\n}\n\n// Добавить функцию с комментарием:\n{\n  "action": "add_function",\n  "name": "take_damage",\n  "parameters": "damage_amount",\n  "comment": "Уменьшает здоровье игрока на указанное количество",\n  "code": "player_health -= damage_amount\\nif player_health <= 0:\\n\\tdie()"\n}\n\n// Заменить функцию:\n{\n  "action": "replace_function",\n  "signature": "func _ready():",\n  "code": "print(\\"Game started!\\")\\nsetup_player()",\n  "comment": "Инициализация игры при запуске"\n}\n\n// Добавить код в конец файла:\n{\n  "action": "add_code",\n  "code": "var player_health = 100",\n  "position_type": "end"\n}\n\n// Добавить код в начало файла:\n{\n  "action": "add_code",\n  "code": "@tool",\n  "position_type": "start"\n}\n\n// Добавить код после extends:\n{\n  "action": "add_code",\n  "code": "var player_speed = 5.0",\n  "position_type": "after_extends"\n}\n\n// Добавить код на конкретную строку:\n{\n  "action": "add_code",\n  "code": "var test_var = 42",\n  "position_type": "specific_line",\n  "line_number": 10\n}\n\n// Удалить код:\n{\n  "action": "delete_code",\n  "code": "var old_variable = 10"\n}'
-	json_edit.custom_minimum_size = Vector2(960, 600)
-	json_tab.add_child(json_edit)
+	# Поле для INI
+	var ini_edit = TextEdit.new()
+	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с INI командами в блоках:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction, speed\n<cod>\nposition += direction * speed * delta\n<end_cod>\n=[end]=\n\n# Или несколько блоков:\n=[command]=\n[add_code]\n<cod>\nvar player_speed = 5.0\n<end_cod>\nposition_type=after_extends\n=[end]=\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction\n<cod>\nposition += direction * player_speed * delta\n<end_cod>\n=[end]=\n\n# Удаление строк:\n=[command]=\n[delete_code]\nlines=5, 10-15, 23\n=[end]=\n\n# Многострочный код с отступами:\n=[command]=\n[add_function]\nname=complex_function\n<cod>\nif condition:\n    print("True")\nelse:\n    print("False")\n<end_cod>\n=[end]=\n\n# Парсер автоматически найдет и выполнит команды между =[command]= и =[end]='
+	ini_edit.custom_minimum_size = Vector2(960, 600)
+	ini_tab.add_child(ini_edit)
 	
-	# Кнопки для JSON вкладки
-	var json_buttons = HBoxContainer.new()
-	json_tab.add_child(json_buttons)
+	# Кнопки для INI вкладки
+	var ini_buttons = HBoxContainer.new()
+	ini_tab.add_child(ini_buttons)
 	
 	var preview_button = Button.new()
 	preview_button.text = "Предварительный просмотр"
 	preview_button.pressed.connect(func():
-		var json_text = json_edit.text
-		show_json_preview(json_text)
+		var ini_text = ini_edit.text
+		show_ini_preview(ini_text)
 	)
-	json_buttons.add_child(preview_button)
+	ini_buttons.add_child(preview_button)
 	
-	var execute_json_button = Button.new()
-	execute_json_button.text = "Выполнить JSON"
-	execute_json_button.pressed.connect(func():
-		var json_text = json_edit.text
-		execute_json_command(json_text)
+	var execute_ini_button = Button.new()
+	execute_ini_button.text = "Выполнить INI"
+	execute_ini_button.pressed.connect(func():
+		var ini_text = ini_edit.text
+		execute_ini_command(ini_text)
 	)
-	json_buttons.add_child(execute_json_button)
+	ini_buttons.add_child(execute_ini_button)
 	
-	var clear_json_button = Button.new()
-	clear_json_button.text = "Очистить"
-	clear_json_button.pressed.connect(func():
-		json_edit.text = ""
+	var clear_ini_button = Button.new()
+	clear_ini_button.text = "Очистить"
+	clear_ini_button.pressed.connect(func():
+		ini_edit.text = ""
 	)
-	json_buttons.add_child(clear_json_button)
+	ini_buttons.add_child(clear_ini_button)
 	
 	# ===== ВКЛАДКА 2: РУЧНАЯ РАБОТА =====
 	var manual_tab = VBoxContainer.new()
@@ -651,14 +934,14 @@ func show_smart_replace_dialog_v2():
 	var separator = HSeparator.new()
 	code_tab.add_child(separator)
 	
-	# Удаление кода
+	# Удаление строк
 	var delete_code_label = Label.new()
-	delete_code_label.text = "Удаление кода:"
+	delete_code_label.text = "Удаление строк:"
 	code_tab.add_child(delete_code_label)
 	
-	var delete_code_edit = TextEdit.new()
-	delete_code_edit.placeholder_text = "Введите код для удаления (точно как в файле):\nvar my_variable = 10"
-	delete_code_edit.custom_minimum_size = Vector2(960, 100)
+	var delete_code_edit = LineEdit.new()
+	delete_code_edit.placeholder_text = "Введите номера строк (например: 5, 10-15, 23)"
+	delete_code_edit.custom_minimum_size = Vector2(960, 30)
 	code_tab.add_child(delete_code_edit)
 	
 	# Кнопки для работы с кодом
@@ -676,9 +959,9 @@ func show_smart_replace_dialog_v2():
 	code_buttons.add_child(add_code_button)
 	
 	var delete_code_button = Button.new()
-	delete_code_button.text = "Удалить код"
+	delete_code_button.text = "Удалить строки"
 	delete_code_button.pressed.connect(func():
-		delete_code_from_file(delete_code_edit.text)
+		delete_lines_from_file(delete_code_edit.text)
 		dialog.hide()
 	)
 	code_buttons.add_child(delete_code_button)
@@ -840,7 +1123,7 @@ func replace_function_content_with_comment_in_text(content: String, function_dat
 			
 			for code_line in new_code_lines:
 				if code_line.strip_edges() != "":
-					result_lines.append(indent + "	" + code_line)
+					result_lines.append(indent + "    " + code_line)  # 4 пробела вместо табуляции
 				else:
 					result_lines.append("")
 			
@@ -996,7 +1279,7 @@ func add_new_function(name: String, args: String, code: String):
 			var func_lines = [func_header]
 			for code_line in code.split("\n"):
 				if code_line.strip_edges() != "":
-					func_lines.append("\t" + code_line)
+					func_lines.append("    " + code_line)  # 4 пробела вместо табуляции
 				else:
 					func_lines.append("")
 			# Добавляем функцию в конец файла
@@ -1127,7 +1410,7 @@ func append_function_with_comment_to_file(file_path: String, name: String, args:
 	var code_lines = code.split("\n")
 	for code_line in code_lines:
 		if code_line.strip_edges() != "":
-			lines.append("\t" + code_line)
+			lines.append("    " + code_line)  # 4 пробела вместо табуляции
 		else:
 			lines.append("")
 	
@@ -1179,9 +1462,9 @@ func add_code_to_file(code: String, position: int = 0, line_number: int = 1):
 			else:
 				print("Ошибка при добавлении кода!")
 
-func delete_code_from_file(code_to_delete: String):
-	if code_to_delete.strip_edges() == "":
-		print("Код для удаления не может быть пустым!")
+func delete_lines_from_file(lines_param: String):
+	if lines_param.strip_edges() == "":
+		print("Номера строк для удаления не могут быть пустыми!")
 		return
 	
 	var editor_interface = get_editor_interface()
@@ -1191,11 +1474,11 @@ func delete_code_from_file(code_to_delete: String):
 		var current_script = script_editor.get_current_script()
 		if current_script:
 			var file_path = current_script.resource_path
-			var success = remove_code_from_file(file_path, code_to_delete)
+			var success = remove_lines_from_file(file_path, lines_param)
 			if success:
-				print("Код успешно удален!")
+				print("Строки успешно удалены!")
 			else:
-				print("Ошибка при удалении кода или код не найден!") 
+				print("Ошибка при удалении строк!") 
 
 func insert_code_to_file(file_path: String, code: String, position: int, line_number: int) -> bool:
 	# Читаем файл
@@ -1251,7 +1534,7 @@ func insert_code_to_file(file_path: String, code: String, position: int, line_nu
 
 	return true
 
-func remove_code_from_file(file_path: String, code_to_delete: String) -> bool:
+func remove_lines_from_file(file_path: String, lines_param: String) -> bool:
 	# Читаем файл
 	var file = FileAccess.open(file_path, FileAccess.READ)
 	if not file:
@@ -1260,10 +1543,10 @@ func remove_code_from_file(file_path: String, code_to_delete: String) -> bool:
 	var content = file.get_as_text()
 	file.close()
 
-	# Удаляем код
-	var new_content = remove_code_from_text(content, code_to_delete)
+	# Удаляем строки
+	var new_content = remove_lines_from_text(content, lines_param)
 	if new_content == content:
-		return false  # Код не найден
+		return false  # Строки не найдены
 
 	# Записываем обновленный контент
 	file = FileAccess.open(file_path, FileAccess.WRITE)
@@ -1275,31 +1558,39 @@ func remove_code_from_file(file_path: String, code_to_delete: String) -> bool:
 
 	return true
 
-func remove_code_from_text(content: String, code_to_delete: String) -> String:
+func remove_lines_from_text(content: String, lines_param: String) -> String:
 	var lines = content.split("\n")
-	var code_lines = code_to_delete.split("\n")
-
-	# Ищем начало кода для удаления
-	for i in range(lines.size() - code_lines.size() + 1):
-		var found = true
-
-		# Проверяем, совпадает ли код начиная с текущей строки
-		for j in range(code_lines.size()):
-			if i + j >= lines.size() or lines[i + j].strip_edges() != code_lines[j].strip_edges():
-				found = false
-				break
-
-		if found:
-			# Удаляем найденный код
-			var result_lines = []
-			for k in range(lines.size()):
-				if k < i or k >= i + code_lines.size():
-					result_lines.append(lines[k])
-
-			return "\n".join(result_lines)
-
-	# Код не найден
-	return content
+	var lines_to_remove = []
+	
+	# Парсим параметр lines
+	var parts = lines_param.split(",")
+	for part in parts:
+		part = part.strip_edges()
+		if "-" in part:
+			# Диапазон строк (например: "23-40")
+			var range_parts = part.split("-")
+			if range_parts.size() == 2:
+				var start_line = range_parts[0].strip_edges().to_int()
+				var end_line = range_parts[1].strip_edges().to_int()
+				for i in range(start_line, end_line + 1):
+					if i > 0 and i <= lines.size():
+						lines_to_remove.append(i - 1)  # Конвертируем в индекс (начиная с 0)
+		else:
+			# Отдельная строка
+			var line_num = part.to_int()
+			if line_num > 0 and line_num <= lines.size():
+				lines_to_remove.append(line_num - 1)  # Конвертируем в индекс (начиная с 0)
+	
+	# Сортируем номера строк в обратном порядке для удаления с конца
+	lines_to_remove.sort()
+	lines_to_remove.reverse()
+	
+	# Удаляем строки
+	for line_index in lines_to_remove:
+		if line_index >= 0 and line_index < lines.size():
+			lines.remove_at(line_index)
+	
+	return "\n".join(lines)
 
 func find_extends_line(lines: Array) -> int:
 	# Ищем строку с extends
@@ -1364,7 +1655,7 @@ func replace_function_content_with_new_signature_in_text(content: String, functi
 			var new_code_lines = new_code.split("\n")
 			for code_line in new_code_lines:
 				if code_line.strip_edges() != "":
-					result_lines.append(indent + "\t" + code_line)
+					result_lines.append(indent + "    " + code_line)  # 4 пробела вместо табуляции
 				else:
 					result_lines.append("")
 			# Пропускаем старое содержимое функции и комментарий

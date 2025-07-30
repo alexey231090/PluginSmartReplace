@@ -16,3 +16,15 @@ func move_player(direction, speed):
 #Теперь функция foo принимает 5 параметров
 func foo(a, b, c, d, e):
 	print(a, b, c, d, e)
+
+# Описание функции
+func function_name(param1, param2):
+	print("Hello")
+	return true
+
+func test_function():
+	var condition = 4 < 8
+	if condition:
+		print("True")
+	else:
+		print("False")
