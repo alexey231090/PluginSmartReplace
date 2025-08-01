@@ -1733,6 +1733,12 @@ func add_new_function_with_comment(name: String, args: String, code: String, com
 	if name.strip_edges() == "":
 		print("Имя функции не может быть пустым!")
 		return
+	
+	# Проверяем, существует ли уже функция с таким именем
+	var existing_function = find_function_by_name(name)
+	if not existing_function.is_empty():
+		print("Функция с именем '" + name + "' уже существует! Пропускаем добавление.")
+		return
 		
 	var editor_interface = get_editor_interface()
 	var script_editor = editor_interface.get_script_editor()
@@ -1758,7 +1764,13 @@ func append_function_with_comment_to_file(file_path: String, name: String, args:
 	var content = file.get_as_text()
 	file.close()
 	
+	# Дополнительная проверка на существующую функцию
 	var lines = content.split("\n")
+	for line in lines:
+		var stripped_line = line.strip_edges()
+		if stripped_line.begins_with("func " + name + "(") or stripped_line.begins_with("func " + name + "():"):
+			print("Функция '" + name + "' уже существует в файле! Пропускаем добавление.")
+			return false
 	
 	# Добавляем пустую строку если файл не заканчивается пустой строкой
 	if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
@@ -2254,6 +2266,7 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 8. ВАЖНО: Если пользователь просит изменить код, сразу давай краткий ответ и INI команды
 9. ВАЖНО: ВСЕГДА используй INI команды для ЛЮБЫХ изменений кода. НЕ показывай код без INI команд
 10. ВАЖНО: Если пользователь просит добавить, изменить или удалить что-то в коде, ОБЯЗАТЕЛЬНО используй =[command]= блоки
+11. ВАЖНО: При добавлении функций проверяй, не существует ли уже функция с таким именем. НЕ создавай дублирующиеся функции
 
 ФОРМАТ INI КОМАНД:
 Команды должны быть в формате:
@@ -2448,7 +2461,7 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 			404:
 				error_message = "Модель не найдена (404). Проверьте доступность модели Gemini."
 			429:
-				error_message = "Дневной лимит бесплатных запросов исчерпан (429). Лимит: 50 запросов в день. Попробуйте завтра или перейдите на платный план Google AI Studio."
+				error_message = "Лимит запросов исчерпан (429). Возможно, превышен дневной лимит или лимит запросов в минуту. Попробуйте позже или перейдите на платный план Google AI Studio."
 			500:
 				error_message = "Ошибка сервера Google (500). Попробуйте позже."
 			503:
