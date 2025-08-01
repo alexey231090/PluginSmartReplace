@@ -165,7 +165,9 @@ func create_toolbar_button() -> Button:
 	return smart_replace_button
 
 func _on_smart_replace_pressed():
-	print("Кнопка нажата!")
+	if current_dialog and current_dialog.visible:
+		current_dialog.grab_focus()
+		return
 	show_smart_replace_dialog_v2()
 
 # ===== INI ПАРСЕР ФУНКЦИИ =====
@@ -930,7 +932,8 @@ func show_smart_replace_dialog_v2():
 	message_edit.placeholder_text = "Введите ваше сообщение для AI..."
 	message_edit.custom_minimum_size = Vector2(800, 30)
 	message_edit.text_submitted.connect(func(text):
-		send_message_to_ai(text)
+		if text.strip_edges() != "" and not is_requesting:
+			send_message_to_ai(text)
 	)
 	input_container.add_child(message_edit)
 	
@@ -940,6 +943,9 @@ func show_smart_replace_dialog_v2():
 	send_button.pressed.connect(func():
 		var message = message_edit.text
 		if message.strip_edges() != "":
+			# Отключаем кнопку на время запроса
+			send_button.disabled = true
+			send_button.text = "Отправляется..."
 			send_message_to_ai(message)
 			message_edit.text = ""
 	)
@@ -1032,6 +1038,7 @@ func show_smart_replace_dialog_v2():
 	ai_tab.set_meta("chat_history_edit", chat_history_edit)
 	ai_tab.set_meta("message_edit", message_edit)
 	ai_tab.set_meta("extracted_edit", extracted_commands_edit)
+	ai_tab.set_meta("send_button", send_button)
 	ai_tab.set_meta("apply_button", apply_commands_button)
 	
 	# Сохраняем ссылку на диалог для доступа из других функций
@@ -2027,7 +2034,6 @@ func replace_function_content_with_new_signature_in_text(content: String, functi
 # ===== AI ЧАТ ФУНКЦИИ =====
 
 func send_message_to_ai(message: String):
-	print("send_message_to_ai вызвана с сообщением: ", message)
 	
 	if message.strip_edges() == "":
 		return
@@ -2057,6 +2063,19 @@ func send_message_to_ai(message: String):
 	
 	# Устанавливаем флаг выполнения запроса
 	is_requesting = true
+	
+	# Отключаем поле ввода на время запроса
+	if current_dialog:
+		var vbox = current_dialog.get_child(0)
+		if vbox and vbox.get_child_count() > 0:
+			var tab_container = vbox.get_child(0)
+			if tab_container and tab_container.get_child_count() > 0:
+				var ai_tab = tab_container.get_child(0)
+				if ai_tab:
+					var message_edit = ai_tab.get_meta("message_edit")
+					if message_edit:
+						message_edit.editable = false
+						message_edit.placeholder_text = "Подождите, запрос выполняется..."
 	
 	# Сбрасываем флаг первого сообщения после отправки
 	is_first_message_in_session = false
@@ -2219,8 +2238,9 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 	# Всегда обновляем информацию о скрипте при каждом сообщении
 	current_script_info = get_current_script_info()
 	
-	# Добавляем инструкции ВСЕГДА (не только в первом сообщении)
-	instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
+	# Добавляем инструкции только в первом сообщении сессии для оптимизации
+	if is_first_message_in_session:
+		instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
 
 Твоя задача - помогать пользователю редактировать код в GDScript файлах. Когда пользователь просит изменить код, ты должен:
 
@@ -2289,6 +2309,10 @@ const TEST_VALUE = 100
 Иерархия: {hierarchy}
 
 """.format(current_script_info)
+	
+	# Добавляем краткое напоминание для последующих сообщений
+	if not is_first_message_in_session:
+		instructions = "НАПОМИНАНИЕ: Используй INI команды (=[command]= ... =[end]=) для любых изменений кода.\n\n"
 		print("=== ИНФОРМАЦИЯ ДЛЯ AI ===")
 		print("Скрипт: ", current_script_info.filename)
 		print("Путь: ", current_script_info.path)
@@ -2321,7 +2345,10 @@ const TEST_VALUE = 100
 	})
 
 func call_gemini_api(prompt: String):
-	print("call_gemini_api вызвана с промптом длиной: ", prompt.length())
+	print("=== НАЧАЛО call_gemini_api ===")
+	print("Длина промпта: ", prompt.length())
+	print("is_requesting: ", is_requesting)
+	print("Текущее время: ", Time.get_time_string_from_system())
 	
 	# Создаем HTTP запрос
 	var http = HTTPRequest.new()
@@ -2358,6 +2385,7 @@ func call_gemini_api(prompt: String):
 	# Отправляем запрос
 	print("Отправляем запрос на URL: ", url)
 	print("Длина JSON данных: ", json_string.length())
+	print("=== ОТПРАВКА HTTP ЗАПРОСА ===")
 	var error = http.request(url, headers, HTTPClient.METHOD_POST, json_string)
 	if error != OK:
 		print("Ошибка при отправке HTTP запроса: ", error)
@@ -2372,13 +2400,35 @@ func call_gemini_api(prompt: String):
 	)
 
 func handle_gemini_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
-	print("handle_gemini_response вызвана с кодом: ", response_code)
+	print("=== НАЧАЛО handle_gemini_response ===")
+	print("Код ответа: ", response_code)
+	print("is_requesting до сброса: ", is_requesting)
+	print("Текущее время: ", Time.get_time_string_from_system())
 	
-	# Сбрасываем флаг выполнения запроса
-	is_requesting = false
+	# Включаем кнопку и поле ввода обратно
+	if current_dialog:
+		var vbox = current_dialog.get_child(0)
+		if vbox and vbox.get_child_count() > 0:
+			var tab_container = vbox.get_child(0)
+			if tab_container and tab_container.get_child_count() > 0:
+				var ai_tab = tab_container.get_child(0)
+				if ai_tab:
+					var send_button = ai_tab.get_meta("send_button")
+					if send_button:
+						send_button.disabled = false
+						send_button.text = "Отправить"
+					
+					var message_edit = ai_tab.get_meta("message_edit")
+					if message_edit:
+						message_edit.editable = true
+						message_edit.placeholder_text = "Введите ваше сообщение для AI..."
+	
+	# Флаг is_requesting будет сброшен в process_ai_response
 	
 	if result != HTTPRequest.RESULT_SUCCESS:
 		print("Ошибка HTTP запроса: ", result)
+		print("Сбрасываем is_requesting = false из-за ошибки HTTP")
+		is_requesting = false
 		add_message_to_chat("Система", "Ошибка соединения с Google Gemini API", "system")
 		return
 	
@@ -2398,7 +2448,7 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 			404:
 				error_message = "Модель не найдена (404). Проверьте доступность модели Gemini."
 			429:
-				error_message = "Слишком много запросов (429). Подождите немного и попробуйте снова."
+				error_message = "Дневной лимит бесплатных запросов исчерпан (429). Лимит: 50 запросов в день. Попробуйте завтра или перейдите на платный план Google AI Studio."
 			500:
 				error_message = "Ошибка сервера Google (500). Попробуйте позже."
 			503:
@@ -2406,6 +2456,8 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 			_:
 				error_message = "Ошибка API: " + str(response_code) + ". Проверьте интернет-соединение и API ключ."
 		
+		print("Сбрасываем is_requesting = false из-за ошибки API")
+		is_requesting = false
 		add_message_to_chat("Система", error_message, "system")
 		return
 	
@@ -2434,8 +2486,11 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 		add_message_to_chat("Система", "Пустой ответ от AI", "system")
 
 func process_ai_response(ai_response: String):
+	print("=== НАЧАЛО process_ai_response ===")
+	print("is_requesting до сброса: ", is_requesting)
 	# Сбрасываем флаг выполнения запроса
 	is_requesting = false
+	print("Сбрасываем is_requesting = false в process_ai_response")
 	
 	# Извлекаем INI команды из ответа AI
 	var ini_commands = extract_ini_commands(ai_response)
