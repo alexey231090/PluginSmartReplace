@@ -12,6 +12,12 @@ var chat_history = []
 # Ссылка на текущий диалог
 var current_dialog = null
 
+# Массив для отслеживания всех открытых диалогов
+var open_dialogs = []
+
+# Глобальный список системных сообщений Godot
+var system_messages = []
+
 # Флаг для предотвращения множественных запросов
 var is_requesting = false
 
@@ -154,6 +160,9 @@ func _enter_tree():
 	add_control_to_container(CONTAINER_TOOLBAR, create_toolbar_button())
 
 func _exit_tree():
+	# Закрываем все диалоги перед выходом
+	close_all_dialogs()
+	
 	# Удаляем кнопку из панели инструментов
 	remove_control_from_container(CONTAINER_TOOLBAR, smart_replace_button)
 
@@ -165,9 +174,15 @@ func create_toolbar_button() -> Button:
 	return smart_replace_button
 
 func _on_smart_replace_pressed():
-	if current_dialog and current_dialog.visible:
+	# Проверяем, не открыт ли уже диалог
+	if current_dialog and is_instance_valid(current_dialog) and current_dialog.visible:
+		print("Диалог уже открыт, фокусируемся на нем")
 		current_dialog.grab_focus()
 		return
+	
+	# Закрываем все другие диалоги перед открытием нового
+	close_all_dialogs()
+	
 	show_smart_replace_dialog_v2()
 
 # ===== INI ПАРСЕР ФУНКЦИИ =====
@@ -686,6 +701,34 @@ func close_all_dialogs():
 	for child in base_control.get_children():
 		if child is AcceptDialog:
 			child.hide()
+			child.queue_free()
+	
+	# Закрываем диалоги из нашего массива
+	for dialog in open_dialogs:
+		if is_instance_valid(dialog):
+			dialog.hide()
+			dialog.queue_free()
+	
+	# Очищаем массив открытых диалогов
+	open_dialogs.clear()
+	current_dialog = null
+	
+	print("Все диалоги закрыты")
+
+# Функция для принудительного закрытия всех диалогов (для отладки)
+func force_close_all_dialogs():
+	print("Принудительное закрытие всех диалогов...")
+	close_all_dialogs()
+
+# Функция для добавления системного сообщения
+func add_system_message(message: String, type: String = "INFO"):
+	var formatted_message = "%s: %s" % [type, message]
+	system_messages.append(formatted_message)
+	print("Добавлено системное сообщение: ", formatted_message)
+
+# Функция для получения всех системных сообщений
+func get_system_messages() -> Array:
+	return system_messages.duplicate()
 
 func check_indentation_issues(ini_text: String) -> String:
 	var issues = []
@@ -872,9 +915,13 @@ func generate_preview_for_ini(ini_text: String) -> String:
 	return preview_text
 
 func show_smart_replace_dialog_v2():
-	# Закрываем предыдущий диалог, если он есть
-	if current_dialog:
-		current_dialog.queue_free()
+	# Проверяем, не открыт ли уже диалог
+	if current_dialog and is_instance_valid(current_dialog) and current_dialog.visible:
+		print("Диалог уже открыт!")
+		return
+	
+	# Закрываем все предыдущие диалоги
+	close_all_dialogs()
 	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Smart Replace - Умная замена функций"
@@ -882,11 +929,13 @@ func show_smart_replace_dialog_v2():
 	
 	# Сохраняем ссылку на диалог
 	current_dialog = dialog
+	open_dialogs.append(dialog)
 	
 	# Добавляем обработчик закрытия диалога
 	dialog.visibility_changed.connect(func():
 		if not dialog.visible:
 			current_dialog = null
+			open_dialogs.erase(dialog)
 	)
 	
 	# Создаем основной контейнер
@@ -903,19 +952,28 @@ func show_smart_replace_dialog_v2():
 	tab_container.add_child(ai_tab)
 	tab_container.set_tab_title(0, "AI Чат")
 	
+	# Создаем горизонтальный контейнер для чата и ошибок
+	var chat_errors_container = HBoxContainer.new()
+	ai_tab.add_child(chat_errors_container)
+	
+	# ===== ЛЕВАЯ КОЛОНКА: ЧАТ =====
+	var chat_column = VBoxContainer.new()
+	chat_column.custom_minimum_size = Vector2(600, 400)
+	chat_errors_container.add_child(chat_column)
+	
 	# Заголовок для AI чата
 	var ai_label = Label.new()
 	ai_label.text = "AI Чат - общайтесь с Google Gemini и автоматически редактируйте код:"
-	ai_tab.add_child(ai_label)
+	chat_column.add_child(ai_label)
 	
 	# Область чата
 	var chat_area = VBoxContainer.new()
-	chat_area.custom_minimum_size = Vector2(960, 400)
-	ai_tab.add_child(chat_area)
+	chat_area.custom_minimum_size = Vector2(580, 350)
+	chat_column.add_child(chat_area)
 	
 	# Поле для отображения истории чата
 	var chat_history_edit = RichTextLabel.new()
-	chat_history_edit.custom_minimum_size = Vector2(960, 350)
+	chat_history_edit.custom_minimum_size = Vector2(580, 300)
 	chat_history_edit.bbcode_enabled = true
 	chat_history_edit.scroll_following = true
 	chat_area.add_child(chat_history_edit)
@@ -925,12 +983,12 @@ func show_smart_replace_dialog_v2():
 	
 	# Контейнер для ввода сообщения
 	var input_container = HBoxContainer.new()
-	ai_tab.add_child(input_container)
+	chat_column.add_child(input_container)
 	
 	# Поле для ввода сообщения
 	var message_edit = LineEdit.new()
 	message_edit.placeholder_text = "Введите ваше сообщение для AI..."
-	message_edit.custom_minimum_size = Vector2(800, 30)
+	message_edit.custom_minimum_size = Vector2(400, 30)
 	message_edit.text_submitted.connect(func(text):
 		if text.strip_edges() != "" and not is_requesting:
 			send_message_to_ai(text)
@@ -950,6 +1008,109 @@ func show_smart_replace_dialog_v2():
 			message_edit.text = ""
 	)
 	input_container.add_child(send_button)
+	
+	# ===== ПРАВАЯ КОЛОНКА: ОШИБКИ =====
+	var errors_column = VBoxContainer.new()
+	errors_column.custom_minimum_size = Vector2(350, 400)
+	chat_errors_container.add_child(errors_column)
+	
+	# Заголовок для ошибок
+	var errors_label = Label.new()
+	errors_label.text = "Ошибки Godot (копируйте и отправляйте в чат):"
+	errors_column.add_child(errors_label)
+	
+	# Список ошибок
+	var errors_list = ItemList.new()
+	errors_list.custom_minimum_size = Vector2(330, 300)
+	errors_list.allow_reselect = true
+	errors_list.allow_rmb_select = true
+	errors_list.item_selected.connect(func(index):
+		var error_text = errors_list.get_item_text(index)
+		DisplayServer.clipboard_set(error_text)
+		print("Ошибка скопирована в буфер обмена: ", error_text)
+	)
+	errors_column.add_child(errors_list)
+	
+	# Кнопки управления ошибками
+	var errors_buttons = HBoxContainer.new()
+	errors_column.add_child(errors_buttons)
+	
+	# Кнопка копирования ошибки
+	var copy_error_button = Button.new()
+	copy_error_button.text = "Копировать"
+	copy_error_button.pressed.connect(func():
+		var selected_items = errors_list.get_selected_items()
+		if selected_items.size() > 0:
+			var error_text = errors_list.get_item_text(selected_items[0])
+			DisplayServer.clipboard_set(error_text)
+			print("Ошибка скопирована в буфер обмена!")
+	)
+	errors_buttons.add_child(copy_error_button)
+	
+	# Кнопка отправки ошибки в чат
+	var send_error_button = Button.new()
+	send_error_button.text = "Отправить в чат"
+	send_error_button.pressed.connect(func():
+		var selected_items = errors_list.get_selected_items()
+		if selected_items.size() > 0:
+			var error_text = errors_list.get_item_text(selected_items[0])
+			message_edit.text = "Ошибка: " + error_text
+			print("Ошибка добавлена в поле сообщения!")
+	)
+	errors_buttons.add_child(send_error_button)
+	
+	# Кнопка обновления списка ошибок
+	var refresh_errors_button = Button.new()
+	refresh_errors_button.text = "Обновить"
+	refresh_errors_button.pressed.connect(func():
+		update_errors_list(errors_list)
+	)
+	errors_buttons.add_child(refresh_errors_button)
+	
+	# Кнопка добавления ошибки вручную
+	var add_error_button = Button.new()
+	add_error_button.text = "Добавить ошибку"
+	add_error_button.pressed.connect(func():
+		show_add_error_dialog(errors_list)
+	)
+	errors_buttons.add_child(add_error_button)
+	
+	# Кнопка добавления системных сообщений
+	var add_system_button = Button.new()
+	add_system_button.text = "Добавить системное"
+	add_system_button.tooltip_text = "Добавить системное сообщение Godot"
+	add_system_button.pressed.connect(func():
+		add_system_message("--- Debug adapter server started on port 6006 ---", "INFO")
+		add_system_message("--- GDScript language server started on port 6005 ---", "INFO")
+		add_system_message("UID duplicate detected between res://plugin/icon.svg and res://addons/smart_replace/plugin/icon.svg.", "WARNING")
+		update_errors_list(errors_list)
+		print("Добавлены системные сообщения Godot!")
+	)
+	errors_buttons.add_child(add_system_button)
+	
+	# Кнопка очистки системных сообщений
+	var clear_system_button = Button.new()
+	clear_system_button.text = "Очистить системные"
+	clear_system_button.tooltip_text = "Очистить все системные сообщения"
+	clear_system_button.pressed.connect(func():
+		system_messages.clear()
+		update_errors_list(errors_list)
+		print("Системные сообщения очищены!")
+	)
+	errors_buttons.add_child(clear_system_button)
+	
+	# Загружаем ошибки при создании диалога
+	update_errors_list(errors_list)
+	
+	# Подключаем сигнал изменения файлов для автоматического обновления
+	var editor_interface = get_editor_interface()
+	var file_system = editor_interface.get_resource_filesystem()
+	if file_system:
+		file_system.filesystem_changed.connect(func():
+			# Обновляем список ошибок с небольшой задержкой
+			await get_tree().process_frame
+			update_errors_list(errors_list)
+		)
 	
 	# Поле для API ключа
 	var api_key_container = HBoxContainer.new()
@@ -1039,6 +1200,7 @@ func show_smart_replace_dialog_v2():
 	ai_tab.set_meta("message_edit", message_edit)
 	ai_tab.set_meta("extracted_edit", extracted_commands_edit)
 	ai_tab.set_meta("send_button", send_button)
+	ai_tab.set_meta("errors_list", errors_list)
 	ai_tab.set_meta("apply_button", apply_commands_button)
 	
 	# Сохраняем ссылку на диалог для доступа из других функций
@@ -2655,5 +2817,207 @@ func extract_ini_commands(ai_response: String) -> String:
 			current_command.append(line)
 	
 	return "\n\n".join(commands)
+
+# Функция для обновления списка ошибок Godot
+func update_errors_list(errors_list: ItemList):
+	errors_list.clear()
+	
+	# Получаем ошибки из редактора Godot
+	var editor_interface = get_editor_interface()
+	if not editor_interface:
+		return
+	
+	# Массивы для разных типов проблем
+	var errors = []  # Красные - критические ошибки
+	var warnings = []  # Желтые - предупреждения
+	var info = []  # Синие - информация
+	
+	# Получаем ошибки из редактора скриптов
+	var script_editor = editor_interface.get_script_editor()
+	if script_editor:
+		# Получаем все открытые скрипты
+		var open_scripts = script_editor.get_open_scripts()
+		for script in open_scripts:
+			if script:
+				var file_path = script.resource_path
+				var file = FileAccess.open(file_path, FileAccess.READ)
+				if file:
+					var content = file.get_as_text()
+					file.close()
+					
+					# Проверяем на синтаксические ошибки
+					var lines = content.split("\n")
+					for i in range(lines.size()):
+						var line = lines[i]
+						var line_number = i + 1
+						
+						# Проверяем на незакрытые скобки (ОШИБКА)
+						var open_brackets = line.count("(") + line.count("[") + line.count("{")
+						var close_brackets = line.count(")") + line.count("]") + line.count("}")
+						if open_brackets != close_brackets:
+							errors.append("ОШИБКА: %s:%d - Несбалансированные скобки" % [file_path.get_file(), line_number])
+						
+						# Проверяем на незакрытые кавычки (ОШИБКА)
+						var quotes = line.count("\"")
+						if quotes % 2 != 0:
+							errors.append("ОШИБКА: %s:%d - Незакрытые кавычки" % [file_path.get_file(), line_number])
+						
+						# Проверяем на отсутствие двоеточия после ключевых слов (ОШИБКА)
+						var stripped_line = line.strip_edges()
+						if stripped_line.begins_with("func ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после func" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("if ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после if" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("for ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после for" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("while ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после while" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("match ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после match" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("class_name ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после class_name" % [file_path.get_file(), line_number])
+						elif stripped_line.begins_with("extends ") and not stripped_line.ends_with(":"):
+							errors.append("ОШИБКА: %s:%d - Отсутствует двоеточие после extends" % [file_path.get_file(), line_number])
+						
+						# Проверяем на неиспользуемые переменные (ПРЕДУПРЕЖДЕНИЕ)
+						if "var " in line and "=" in line:
+							var var_name = line.split("var ")[1].split("=")[0].strip_edges()
+							if var_name != "" and not content.contains(" " + var_name + " ") and not content.contains("(" + var_name + ")"):
+								warnings.append("ПРЕДУПРЕЖДЕНИЕ: %s:%d - Возможно неиспользуемая переменная '%s'" % [file_path.get_file(), line_number, var_name])
+	
+	# Добавляем ошибки (красные)
+	for error in errors:
+		var index = errors_list.add_item(error)
+		errors_list.set_item_custom_fg_color(index, Color.RED)
+	
+	# Добавляем предупреждения (желтые)
+	for warning in warnings:
+		var index = errors_list.add_item(warning)
+		errors_list.set_item_custom_fg_color(index, Color.YELLOW)
+	
+	# Добавляем информацию (синие)
+	for info_item in info:
+		var index = errors_list.add_item(info_item)
+		errors_list.set_item_custom_fg_color(index, Color.CYAN)
+	
+	# Если нет проблем, добавляем подсказку
+	if errors.size() == 0 and warnings.size() == 0:
+		var index = errors_list.add_item("✅ Нет обнаруженных ошибок")
+		errors_list.set_item_custom_fg_color(index, Color.GREEN)
+		index = errors_list.add_item("💡 Добавьте ошибку вручную через кнопку 'Добавить ошибку'")
+		errors_list.set_item_custom_fg_color(index, Color.CYAN)
+	
+	# Добавляем системные сообщения (синие)
+	for system_msg in system_messages:
+		var index = errors_list.add_item(system_msg)
+		errors_list.set_item_custom_fg_color(index, Color.CYAN)
+	
+	# Добавляем кнопку для ручного добавления
+	var add_index = errors_list.add_item("➕ Добавить ошибку вручную...")
+	errors_list.set_item_custom_fg_color(add_index, Color.CYAN)
+	
+	print("Список ошибок обновлен: %d ошибок, %d предупреждений, %d системных сообщений" % [errors.size(), warnings.size(), system_messages.size()])
+
+# Функция для показа диалога добавления ошибки
+func show_add_error_dialog(errors_list: ItemList):
+	# Проверяем, не открыт ли уже диалог добавления ошибок
+	for dialog in open_dialogs:
+		if dialog.title == "Добавить ошибку" and dialog.visible:
+			print("Диалог добавления ошибки уже открыт!")
+			return
+	
+	var dialog = AcceptDialog.new()
+	dialog.title = "Добавить ошибку"
+	dialog.size = Vector2(600, 400)
+	
+	# Создаем контейнер
+	var vbox = VBoxContainer.new()
+	dialog.add_child(vbox)
+	
+	# Заголовок
+	var label = Label.new()
+	label.text = "Введите текст ошибки из консоли Godot:"
+	vbox.add_child(label)
+	
+	# Поле для ввода ошибки (объявляем ПЕРЕД кнопками)
+	var error_edit = TextEdit.new()
+	error_edit.custom_minimum_size = Vector2(580, 250)
+	error_edit.placeholder_text = "Например:\nERROR: res://test.gd:10 - Parse Error: Invalid syntax\nWARNING: res://test.gd:15 - Unused variable 'x'\nWARNING: editor/editor_file_system.cpp:1358 - UID duplicate detected\n\nСоветы:\n- Начинайте с ERROR: для красных ошибок\n- Начинайте с WARNING: для желтых предупреждений\n- Начинайте с INFO: для синей информации\n- Системные сообщения Godot тоже можно добавлять"
+	vbox.add_child(error_edit)
+	
+	# Кнопки для быстрого добавления системных сообщений
+	var quick_buttons = HBoxContainer.new()
+	vbox.add_child(quick_buttons)
+	
+	var uid_duplicate_button = Button.new()
+	uid_duplicate_button.text = "UID Duplicate"
+	uid_duplicate_button.tooltip_text = "Добавить предупреждение о дублировании UID"
+	uid_duplicate_button.pressed.connect(func():
+		error_edit.text = "WARNING: editor/editor_file_system.cpp:1358 - UID duplicate detected between res://plugin/icon.svg and res://addons/smart_replace/plugin/icon.svg."
+	)
+	quick_buttons.add_child(uid_duplicate_button)
+	
+	var debug_server_button = Button.new()
+	debug_server_button.text = "Debug Server"
+	debug_server_button.tooltip_text = "Добавить сообщение о запуске debug сервера"
+	debug_server_button.pressed.connect(func():
+		error_edit.text = "INFO: --- Debug adapter server started on port 6006 ---"
+	)
+	quick_buttons.add_child(debug_server_button)
+	
+	var language_server_button = Button.new()
+	language_server_button.text = "Language Server"
+	language_server_button.tooltip_text = "Добавить сообщение о запуске language сервера"
+	language_server_button.pressed.connect(func():
+		error_edit.text = "INFO: --- GDScript language server started on port 6005 ---"
+	)
+	quick_buttons.add_child(language_server_button)
+	vbox.add_child(error_edit)
+	
+	# Кнопки
+	var buttons = HBoxContainer.new()
+	vbox.add_child(buttons)
+	
+	var add_button = Button.new()
+	add_button.text = "Добавить"
+	add_button.pressed.connect(func():
+		var error_text = error_edit.text.strip_edges()
+		if error_text != "":
+			var index = errors_list.add_item(error_text)
+			
+			# Автоматически определяем цвет на основе префикса
+			if error_text.begins_with("ERROR:"):
+				errors_list.set_item_custom_fg_color(index, Color.RED)
+			elif error_text.begins_with("WARNING:"):
+				errors_list.set_item_custom_fg_color(index, Color.YELLOW)
+			elif error_text.begins_with("INFO:"):
+				errors_list.set_item_custom_fg_color(index, Color.CYAN)
+			else:
+				errors_list.set_item_custom_fg_color(index, Color.WHITE)
+			
+			dialog.queue_free()
+			print("Ошибка добавлена в список: ", error_text)
+	)
+	buttons.add_child(add_button)
+	
+	var cancel_button = Button.new()
+	cancel_button.text = "Отмена"
+	cancel_button.pressed.connect(func():
+		dialog.queue_free()
+	)
+	buttons.add_child(cancel_button)
+	
+	# Добавляем диалог в массив открытых диалогов
+	open_dialogs.append(dialog)
+	
+	# Добавляем обработчик закрытия
+	dialog.visibility_changed.connect(func():
+		if not dialog.visible:
+			open_dialogs.erase(dialog)
+	)
+	
+	# Показываем диалог
+	get_editor_interface().get_base_control().add_child(dialog)
+	dialog.popup_centered()
 
 	
