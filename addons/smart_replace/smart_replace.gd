@@ -1,9 +1,69 @@
 @tool
 extends EditorPlugin
 
+# ===== GEMINI API НАСТРОЙКИ =====
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+var gemini_api_key: String = ""  # Будет загружаться из настроек
+const CHAT_HISTORY_FILE = "res://chat_history.json"
+
+# История чата для контекста
+var chat_history = []
+
+# Ссылка на текущий диалог
+var current_dialog = null
+
+# Флаг для предотвращения множественных запросов
+var is_requesting = false
+
+# Функция для сохранения истории чата
+func save_chat_history():
+	var file = FileAccess.open(CHAT_HISTORY_FILE, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(chat_history))
+		file.close()
+
+# Функция для загрузки истории чата
+func load_chat_history():
+	if FileAccess.file_exists(CHAT_HISTORY_FILE):
+		var file = FileAccess.open(CHAT_HISTORY_FILE, FileAccess.READ)
+		if file:
+			var content = file.get_as_text()
+			file.close()
+			var json = JSON.new()
+			var parse_result = json.parse(content)
+			if parse_result == OK:
+				chat_history = json.data
+			else:
+				chat_history = []
+		else:
+			chat_history = []
+	else:
+		chat_history = []
+
+# Функция для загрузки истории чата в интерфейс
+func load_chat_to_ui(chat_history_edit: RichTextLabel):
+	chat_history_edit.text = ""
+	for entry in chat_history:
+		var color = "blue" if entry.role == "user" else "green"
+		var sender = "Вы" if entry.role == "user" else "AI"
+		var formatted_message = "[color=" + color + "][b]" + sender + ":[/b][/color] " + entry.content + "\n\n"
+		chat_history_edit.append_text(formatted_message)
+	
+	# Прокручиваем к концу
+	chat_history_edit.scroll_to_line(chat_history_edit.get_line_count())
+
 var smart_replace_button: Button
 
 func _enter_tree():
+	# Загружаем API ключ
+	load_api_key()
+	
+	# Загружаем историю чата
+	load_chat_history()
+	
+	# Тестируем соединение
+	test_connection()
+	
 	# Создаем кнопку в панели инструментов
 	add_control_to_container(CONTAINER_TOOLBAR, create_toolbar_button())
 
@@ -724,9 +784,22 @@ func generate_preview_for_ini(ini_text: String) -> String:
 	return preview_text
 
 func show_smart_replace_dialog_v2():
+	# Закрываем предыдущий диалог, если он есть
+	if current_dialog:
+		current_dialog.queue_free()
+	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Smart Replace - Умная замена функций"
 	dialog.size = Vector2(1000, 800)
+	
+	# Сохраняем ссылку на диалог
+	current_dialog = dialog
+	
+	# Добавляем обработчик закрытия диалога
+	dialog.visibility_changed.connect(func():
+		if not dialog.visible:
+			current_dialog = null
+	)
 	
 	# Создаем основной контейнер
 	var vbox = VBoxContainer.new()
@@ -784,6 +857,120 @@ func show_smart_replace_dialog_v2():
 	var manual_tab = VBoxContainer.new()
 	tab_container.add_child(manual_tab)
 	tab_container.set_tab_title(1, "Ручная работа")
+	
+	# ===== ВКЛАДКА 3: AI ЧАТ =====
+	var ai_tab = VBoxContainer.new()
+	tab_container.add_child(ai_tab)
+	tab_container.set_tab_title(2, "AI Чат")
+	
+	# Заголовок для AI чата
+	var ai_label = Label.new()
+	ai_label.text = "AI Чат - общайтесь с Google Gemini и автоматически редактируйте код:"
+	ai_tab.add_child(ai_label)
+	
+	# Область чата
+	var chat_area = VBoxContainer.new()
+	chat_area.custom_minimum_size = Vector2(960, 400)
+	ai_tab.add_child(chat_area)
+	
+	# Поле для отображения истории чата
+	var chat_history_edit = RichTextLabel.new()
+	chat_history_edit.custom_minimum_size = Vector2(960, 350)
+	chat_history_edit.bbcode_enabled = true
+	chat_history_edit.scroll_following = true
+	chat_area.add_child(chat_history_edit)
+	
+	# Загружаем историю чата в интерфейс
+	load_chat_to_ui(chat_history_edit)
+	
+	# Контейнер для ввода сообщения
+	var input_container = HBoxContainer.new()
+	ai_tab.add_child(input_container)
+	
+	# Поле для ввода сообщения
+	var message_edit = LineEdit.new()
+	message_edit.placeholder_text = "Введите ваше сообщение для AI..."
+	message_edit.custom_minimum_size = Vector2(800, 30)
+	message_edit.text_submitted.connect(func(text):
+		send_message_to_ai(text)
+	)
+	input_container.add_child(message_edit)
+	
+	# Кнопка отправки
+	var send_button = Button.new()
+	send_button.text = "Отправить"
+	send_button.pressed.connect(func():
+		var message = message_edit.text
+		if message.strip_edges() != "":
+			send_message_to_ai(message)
+			message_edit.text = ""
+	)
+	input_container.add_child(send_button)
+	
+	# Поле для API ключа
+	var api_key_container = HBoxContainer.new()
+	ai_tab.add_child(api_key_container)
+	
+	var api_key_label = Label.new()
+	api_key_label.text = "API ключ Google Gemini:"
+	api_key_container.add_child(api_key_label)
+	
+	var api_key_edit = LineEdit.new()
+	api_key_edit.placeholder_text = "AIza... (введите ваш Google Gemini API ключ)"
+	api_key_edit.secret = true
+	api_key_edit.custom_minimum_size = Vector2(400, 30)
+	api_key_edit.text = gemini_api_key if gemini_api_key != null else ""  # Показываем текущий ключ
+	api_key_container.add_child(api_key_edit)
+	
+	var save_api_button = Button.new()
+	save_api_button.text = "Сохранить ключ"
+	save_api_button.pressed.connect(func():
+		gemini_api_key = api_key_edit.text
+		save_api_key()
+		print("API ключ сохранен!")
+	)
+	api_key_container.add_child(save_api_button)
+	
+	# Кнопки управления
+	var control_buttons = HBoxContainer.new()
+	ai_tab.add_child(control_buttons)
+	
+	var clear_chat_button = Button.new()
+	clear_chat_button.text = "Очистить чат"
+	clear_chat_button.pressed.connect(func():
+		chat_history.clear()
+		chat_history_edit.text = ""
+		save_chat_history()  # Сохраняем пустую историю
+	)
+	control_buttons.add_child(clear_chat_button)
+	
+	# Поле для отображения извлеченных команд (скрыто по умолчанию)
+	var extracted_commands_label = Label.new()
+	extracted_commands_label.text = "Извлеченные INI команды (для отладки):"
+	extracted_commands_label.visible = false
+	ai_tab.add_child(extracted_commands_label)
+	
+	var extracted_commands_edit = TextEdit.new()
+	extracted_commands_edit.placeholder_text = "Здесь будут показаны извлеченные команды"
+	extracted_commands_edit.custom_minimum_size = Vector2(960, 150)
+	extracted_commands_edit.visible = false
+	ai_tab.add_child(extracted_commands_edit)
+	
+	# Кнопка для показа/скрытия команд (для отладки)
+	var show_commands_button = Button.new()
+	show_commands_button.text = "Показать извлеченные команды"
+	show_commands_button.pressed.connect(func():
+		var is_visible = extracted_commands_label.visible
+		extracted_commands_label.visible = !is_visible
+		extracted_commands_edit.visible = !is_visible
+		show_commands_button.text = "Скрыть извлеченные команды" if !is_visible else "Показать извлеченные команды"
+	)
+	control_buttons.add_child(show_commands_button)
+	
+	# Сохраняем ссылки на элементы AI чата для доступа из других функций
+	ai_tab.set_meta("chat_history_edit", chat_history_edit)
+	ai_tab.set_meta("message_edit", message_edit)
+	ai_tab.set_meta("extracted_edit", extracted_commands_edit)
 	
 	# Создаем подвкладки для ручной работы
 	var manual_tab_container = TabContainer.new()
@@ -1664,3 +1851,391 @@ func replace_function_content_with_new_signature_in_text(content: String, functi
 			result_lines.append(lines[i])
 			i += 1
 	return "\n".join(result_lines) 
+
+# ===== AI ЧАТ ФУНКЦИИ =====
+
+func send_message_to_ai(message: String):
+	print("send_message_to_ai вызвана с сообщением: ", message)
+	
+	if message.strip_edges() == "":
+		return
+	
+	# Проверяем, не выполняется ли уже запрос
+	if is_requesting:
+		add_message_to_chat("Система", "Подождите, предыдущий запрос еще выполняется...", "system")
+		return
+	
+	# Проверяем API ключ
+	if gemini_api_key == "":
+		print("API ключ не найден, показываем диалог настроек")
+		show_api_key_dialog()
+		return
+	
+	print("Добавляем сообщение в чат...")
+	# Добавляем сообщение пользователя в чат
+	add_message_to_chat("Вы", message, "user")
+	
+	# Получаем текущий код файла для контекста
+	var current_code = get_current_file_content()
+	print("Текущий код файла получен, длина: ", current_code.length())
+	
+	# Формируем промпт для AI
+	var prompt = create_chat_prompt(message, current_code)
+	print("Промпт сформирован, отправляем запрос к OpenAI...")
+	
+	# Устанавливаем флаг выполнения запроса
+	is_requesting = true
+	
+	# Отправляем запрос к Gemini
+	call_gemini_api(prompt)
+
+func add_message_to_chat(sender: String, message: String, type: String):
+	print("add_message_to_chat вызвана: ", sender, " - ", message)
+	
+	# Добавляем сообщение в историю для API
+	var history_entry = {
+		"role": type,
+		"content": message
+	}
+	chat_history.append(history_entry)
+	
+	# Сохраняем историю в файл
+	save_chat_history()
+	
+	# Используем сохраненную ссылку на диалог
+	if not current_dialog:
+		print("Текущий диалог не найден!")
+		return
+	
+	# Проверяем, что диалог видимый
+	if not current_dialog.visible:
+		print("Диалог найден, но не видимый!")
+		return
+	
+	print("Диалог найден, ищем VBoxContainer...")
+	var vbox = current_dialog.get_child(0)
+	if not vbox or vbox.get_child_count() == 0:
+		print("VBoxContainer не найден!")
+		return
+	
+	print("VBoxContainer найден, ищем TabContainer...")
+	var tab_container = vbox.get_child(0)
+	if not tab_container or tab_container.get_child_count() < 3:
+		print("TabContainer не найден или недостаточно вкладок! Количество вкладок: ", tab_container.get_child_count() if tab_container else 0)
+		return
+	
+	print("TabContainer найден, ищем AI вкладку...")
+	var ai_tab = tab_container.get_child(2)  # AI Чат вкладка
+	if not ai_tab:
+		print("AI вкладка не найдена!")
+		return
+	
+	print("AI вкладка найдена, ищем chat_history_edit в метаданных...")
+	var chat_history_edit = ai_tab.get_meta("chat_history_edit")
+	if not chat_history_edit:
+		print("chat_history_edit не найден в метаданных!")
+		print("Доступные метаданные: ", ai_tab.get_meta_list())
+		return
+	
+	print("chat_history_edit найден, добавляем сообщение...")
+	var color = "blue" if type == "user" else "green"
+	var formatted_message = "[color=" + color + "][b]" + sender + ":[/b][/color] " + message + "\n\n"
+	chat_history_edit.append_text(formatted_message)
+	
+	# Прокручиваем к концу
+	chat_history_edit.scroll_to_line(chat_history_edit.get_line_count())
+	print("Сообщение добавлено успешно!")
+
+func get_current_file_content() -> String:
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			var file_path = current_script.resource_path
+			var file = FileAccess.open(file_path, FileAccess.READ)
+			if file:
+				var content = file.get_as_text()
+				file.close()
+				return content
+	return ""
+
+func create_chat_prompt(message: String, current_code: String) -> String:
+	var system_prompt = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
+
+Твоя задача - помогать пользователю редактировать код в GDScript файлах. Когда пользователь просит изменить код, ты должен:
+
+1. Ответить на естественном языке
+2. Скрыто вставить INI команды для выполнения изменений между маркерами =[command]= и =[end]=
+3. Пользователь не должен видеть эти команды, только твой текстовый ответ
+
+ТЕКУЩИЙ КОД ФАЙЛА:
+```
+{current_code}
+```
+
+ИСТОРИЯ ЧАТА:
+{chat_history}
+
+ПОЛЬЗОВАТЕЛЬ: {message}
+
+Помни: отвечай естественно, как обычный помощник, но скрыто добавляй INI команды для выполнения изменений."""
+	
+	# Формируем историю чата для контекста
+	var history_text = ""
+	for i in range(max(0, chat_history.size() - 6), chat_history.size()):  # Последние 6 сообщений
+		var msg = chat_history[i]
+		history_text += msg.role + ": " + msg.content + "\n"
+	
+	return system_prompt.format({
+		"current_code": current_code,
+		"chat_history": history_text,
+		"message": message
+	})
+
+func call_gemini_api(prompt: String):
+	print("call_gemini_api вызвана с промптом длиной: ", prompt.length())
+	
+	# Создаем HTTP запрос
+	var http = HTTPRequest.new()
+	http.timeout = 30  # 30 секунд таймаут
+	add_child(http)
+	
+	# Формируем JSON для запроса Gemini
+	var request_data = {
+		"contents": [
+			{
+				"parts": [
+					{
+						"text": prompt
+					}
+				]
+			}
+		],
+		"generationConfig": {
+			"temperature": 0.1,
+			"maxOutputTokens": 2000
+		}
+	}
+	
+	var json_string = JSON.stringify(request_data)
+	
+	# Формируем URL с API ключом
+	var url = GEMINI_API_URL + "?key=" + gemini_api_key
+	
+	# Настраиваем заголовки
+	var headers = [
+		"Content-Type: application/json"
+	]
+	
+	# Отправляем запрос
+	print("Отправляем запрос на URL: ", url)
+	print("Длина JSON данных: ", json_string.length())
+	var error = http.request(url, headers, HTTPClient.METHOD_POST, json_string)
+	if error != OK:
+		print("Ошибка при отправке HTTP запроса: ", error)
+		print("Коды ошибок: 0=OK, 1=RESULT_CHUNKED_BODY_SIZE_MISMATCH, 2=RESULT_CANT_RESOLVE, 3=RESULT_CANT_RESOLVE_PROXY, 4=RESULT_CANT_CONNECT, 5=RESULT_CANT_CONNECT_PROXY, 6=RESULT_SSL_HANDSHAKE_ERROR, 7=RESULT_CANT_ACCEPT, 8=RESULT_TIMEOUT")
+		http.queue_free()
+		return
+	
+	# Подключаем сигнал завершения
+	http.request_completed.connect(func(result, response_code, headers, body):
+		handle_gemini_response(result, response_code, headers, body)
+		http.queue_free()
+	)
+
+func handle_gemini_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+	print("handle_gemini_response вызвана с кодом: ", response_code)
+	
+	# Сбрасываем флаг выполнения запроса
+	is_requesting = false
+	
+	if result != HTTPRequest.RESULT_SUCCESS:
+		print("Ошибка HTTP запроса: ", result)
+		add_message_to_chat("Система", "Ошибка соединения с Google Gemini API", "system")
+		return
+	
+	if response_code != 200:
+		print("Ошибка API: ", response_code)
+		var response_text = body.get_string_from_utf8()
+		print("Ответ: ", response_text)
+		
+		# Обрабатываем конкретные ошибки
+		var error_message = "Ошибка API: " + str(response_code)
+		
+		match response_code:
+			400:
+				error_message = "Ошибка запроса (400). Проверьте правильность API ключа Google Gemini."
+			401:
+				error_message = "Ошибка аутентификации (401). Проверьте правильность API ключа Google Gemini."
+			404:
+				error_message = "Модель не найдена (404). Проверьте доступность модели Gemini."
+			429:
+				error_message = "Слишком много запросов (429). Подождите немного и попробуйте снова."
+			500:
+				error_message = "Ошибка сервера Google (500). Попробуйте позже."
+			503:
+				error_message = "Сервис Google Gemini временно недоступен (503). Попробуйте позже."
+			_:
+				error_message = "Ошибка API: " + str(response_code) + ". Проверьте интернет-соединение и API ключ."
+		
+		add_message_to_chat("Система", error_message, "system")
+		return
+	
+	# Парсим JSON ответ
+	var json = JSON.new()
+	var parse_result = json.parse(body.get_string_from_utf8())
+	
+	if parse_result != OK:
+		print("Ошибка парсинга JSON: ", parse_result)
+		add_message_to_chat("Система", "Ошибка обработки ответа", "system")
+		return
+	
+	var response_data = json.data
+	
+	# Извлекаем ответ AI (структура Gemini отличается от OpenAI)
+	if response_data.has("candidates") and response_data.candidates.size() > 0:
+		var candidate = response_data.candidates[0]
+		if candidate.has("content") and candidate.content.has("parts") and candidate.content.parts.size() > 0:
+			var ai_response = candidate.content.parts[0].text
+			process_ai_response(ai_response)
+		else:
+			print("Неожиданная структура ответа AI")
+			add_message_to_chat("Система", "Неожиданная структура ответа AI", "system")
+	else:
+		print("Пустой ответ от AI")
+		add_message_to_chat("Система", "Пустой ответ от AI", "system")
+
+func process_ai_response(ai_response: String):
+	# Сбрасываем флаг выполнения запроса
+	is_requesting = false
+	
+	# Извлекаем INI команды из ответа AI
+	var ini_commands = extract_ini_commands(ai_response)
+	
+	# Убираем INI команды из текстового ответа для пользователя
+	var text_response = remove_ini_commands_from_text(ai_response)
+	
+	# Добавляем ответ AI в чат
+	add_message_to_chat("Gemini", text_response, "ai")
+	
+	# Если есть команды, выполняем их
+	if ini_commands != "":
+		# Показываем извлеченные команды в отладочном поле
+		show_extracted_commands(ini_commands)
+		
+		# Выполняем команды
+		print("Выполняю команды из ответа AI...")
+		execute_ini_command(ini_commands)
+		print("Команды AI выполнены!")
+
+func remove_ini_commands_from_text(text: String) -> String:
+	# Удаляем все блоки команд между =[command]= и =[end]=
+	var lines = text.split("\n")
+	var result_lines = []
+	var in_command = false
+	
+	for line in lines:
+		if line.strip_edges() == "=[command]=":
+			in_command = true
+		elif line.strip_edges() == "=[end]=":
+			in_command = false
+		elif not in_command:
+			result_lines.append(line)
+	
+	return "\n".join(result_lines)
+
+func show_api_key_dialog():
+	# Показываем сообщение пользователю
+	print("Для использования AI чата необходимо настроить API ключ Google Gemini.")
+	print("Введите API ключ в поле выше и нажмите 'Сохранить ключ'.")
+	
+	# Добавляем сообщение в чат
+	add_message_to_chat("Система", "Для использования AI чата необходимо настроить API ключ Google Gemini. Введите ключ в поле выше и нажмите 'Сохранить ключ'.", "system")
+
+func save_api_key():
+	# Сохраняем API ключ в настройках проекта
+	var config = ConfigFile.new()
+	config.set_value("smart_replace", "gemini_api_key", gemini_api_key)
+	config.save("res://smart_replace_config.ini")
+
+func load_api_key():
+	# Загружаем API ключ из настроек
+	var config = ConfigFile.new()
+	var error = config.load("res://smart_replace_config.ini")
+	if error == OK:
+		gemini_api_key = config.get_value("smart_replace", "gemini_api_key", "")
+	else:
+		# Если файл не существует, оставляем пустую строку
+		gemini_api_key = ""
+
+# Функция для тестирования соединения
+func test_connection():
+	print("Тестируем соединение с Google...")
+	var http = HTTPRequest.new()
+	http.timeout = 10
+	add_child(http)
+	
+	var error = http.request("https://www.google.com", [], HTTPClient.METHOD_GET)
+	if error != OK:
+		print("Ошибка соединения с Google: ", error)
+	else:
+		print("Соединение с Google успешно")
+	
+	http.request_completed.connect(func(result, response_code, headers, body):
+		print("Тест соединения завершен: код ", response_code)
+		http.queue_free()
+	)
+
+func show_extracted_commands(ini_commands: String):
+	# Используем сохраненную ссылку на диалог
+	if not current_dialog:
+		print("Текущий диалог не найден в show_extracted_commands!")
+		return
+	
+	var vbox = current_dialog.get_child(0)
+	if not vbox or vbox.get_child_count() == 0:
+		print("VBoxContainer не найден в show_extracted_commands!")
+		return
+	
+	var tab_container = vbox.get_child(0)
+	if not tab_container or tab_container.get_child_count() < 3:
+		print("TabContainer не найден в show_extracted_commands!")
+		return
+	
+	var ai_tab = tab_container.get_child(2)  # AI Чат вкладка
+	if not ai_tab:
+		print("AI вкладка не найдена в show_extracted_commands!")
+		return
+	
+	# Получаем элементы через метаданные
+	var extracted_edit = ai_tab.get_meta("extracted_edit")
+	if not extracted_edit:
+		print("extracted_edit не найден в метаданных!")
+		return
+	
+	extracted_edit.text = ini_commands
+	print("INI команды извлечены и показаны в отладочном поле")
+
+func extract_ini_commands(ai_response: String) -> String:
+	# Ищем блоки команд между =[command]= и =[end]=
+	var commands = []
+	var lines = ai_response.split("\n")
+	var in_command = false
+	var current_command = []
+	
+	for line in lines:
+		if line.strip_edges() == "=[command]=":
+			in_command = true
+			current_command = [line]
+		elif line.strip_edges() == "=[end]=":
+			if in_command:
+				current_command.append(line)
+				commands.append("\n".join(current_command))
+				in_command = false
+		elif in_command:
+			current_command.append(line)
+	
+	return "\n\n".join(commands)
+
+	
