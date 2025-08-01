@@ -12,3 +12,7 @@ func _process(delta):
 # Тестовая функция для теста плагина
 func theta_plugin_test():
 		print("Theta plugin test function called!")
+
+# Проверяет, жив ли игрок
+func is_alive():
+		return health > 0

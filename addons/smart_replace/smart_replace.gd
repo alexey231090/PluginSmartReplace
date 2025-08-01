@@ -2219,9 +2219,8 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 	# Всегда обновляем информацию о скрипте при каждом сообщении
 	current_script_info = get_current_script_info()
 	
-	# Добавляем инструкции только в первом сообщении сессии
-	if is_first_message_in_session:
-		instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
+	# Добавляем инструкции ВСЕГДА (не только в первом сообщении)
+	instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
 
 Твоя задача - помогать пользователю редактировать код в GDScript файлах. Когда пользователь просит изменить код, ты должен:
 
@@ -2233,6 +2232,8 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 6. ВАЖНО: НЕ пиши лишние объяснения о том, что ты не можешь изменять файлы. Просто генерируй INI команды
 7. ВАЖНО: НЕ упоминай "скрытые INI команды" или "эти команды не будут выполнены". Просто отвечай естественно
 8. ВАЖНО: Если пользователь просит изменить код, сразу давай краткий ответ и INI команды
+9. ВАЖНО: ВСЕГДА используй INI команды для ЛЮБЫХ изменений кода. НЕ показывай код без INI команд
+10. ВАЖНО: Если пользователь просит добавить, изменить или удалить что-то в коде, ОБЯЗАТЕЛЬНО используй =[command]= блоки
 
 ФОРМАТ INI КОМАНД:
 Команды должны быть в формате:
@@ -2263,6 +2264,8 @@ comment=Тестовая функция
 	return true
 <end_cod>
 =[end]=
+
+ВАЖНО: ВСЕГДА используй этот формат для любых изменений кода. НЕ показывай код без =[command]= блоков!
 
 Добавление кода:
 =[command]=
@@ -2537,7 +2540,7 @@ func show_extracted_commands(ini_commands: String):
 		print("TabContainer не найден в show_extracted_commands!")
 		return
 	
-	var ai_tab = tab_container.get_child(2)  # AI Чат вкладка
+	var ai_tab = tab_container.get_child(0)  # AI Чат вкладка (теперь первая)
 	if not ai_tab:
 		print("AI вкладка не найдена в show_extracted_commands!")
 		return
