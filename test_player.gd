@@ -8,3 +8,7 @@ func _ready():
 
 func _process(delta):
 	pass
+
+# Тестовая функция для теста плагина
+func theta_plugin_test():
+		print("Theta plugin test function called!")

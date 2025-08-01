@@ -15,6 +15,24 @@ var current_dialog = null
 # Флаг для предотвращения множественных запросов
 var is_requesting = false
 
+# Текущие извлеченные команды для применения
+var current_extracted_commands = ""
+
+# История извлеченных команд
+var extracted_commands_history = []
+const EXTRACTED_COMMANDS_HISTORY_FILE = "res://extracted_commands_history.json"
+
+# Флаг для отслеживания первого сообщения в сессии
+var is_first_message_in_session = true
+
+# Информация о текущем скрипте для кэширования
+var current_script_info = {
+	"path": "",
+	"filename": "",
+	"node_path": "",
+	"hierarchy": ""
+}
+
 # Функция для сохранения истории чата
 func save_chat_history():
 	var file = FileAccess.open(CHAT_HISTORY_FILE, FileAccess.WRITE)
@@ -52,6 +70,68 @@ func load_chat_to_ui(chat_history_edit: RichTextLabel):
 	# Прокручиваем к концу
 	chat_history_edit.scroll_to_line(chat_history_edit.get_line_count())
 
+# Функция для сохранения истории извлеченных команд
+func save_extracted_commands_history():
+	var file = FileAccess.open(EXTRACTED_COMMANDS_HISTORY_FILE, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(extracted_commands_history))
+		file.close()
+
+# Функция для загрузки истории извлеченных команд
+func load_extracted_commands_history():
+	if FileAccess.file_exists(EXTRACTED_COMMANDS_HISTORY_FILE):
+		var file = FileAccess.open(EXTRACTED_COMMANDS_HISTORY_FILE, FileAccess.READ)
+		if file:
+			var content = file.get_as_text()
+			file.close()
+			var json = JSON.new()
+			var parse_result = json.parse(content)
+			if parse_result == OK:
+				extracted_commands_history = json.data
+			else:
+				extracted_commands_history = []
+		else:
+			extracted_commands_history = []
+	else:
+		extracted_commands_history = []
+
+# Функция для добавления команды в историю
+func add_to_extracted_commands_history(commands: String, timestamp: String = ""):
+	if commands.strip_edges() == "":
+		return
+	
+	if timestamp == "":
+		timestamp = Time.get_datetime_string_from_system()
+	
+	var entry = {
+		"timestamp": timestamp,
+		"commands": commands
+	}
+	
+	extracted_commands_history.append(entry)
+	save_extracted_commands_history()
+
+# Функция для обновления цвета кнопки "Применить"
+func update_apply_button_color(button: Button):
+	if current_extracted_commands.strip_edges() != "":
+		# Зеленый цвет для кнопки, если есть команды для применения
+		button.modulate = Color(0.2, 0.8, 0.2)  # Зеленый
+	else:
+		# Обычный цвет, если нет команд
+		button.modulate = Color(1, 1, 1)  # Белый (обычный)
+
+# Функция для обновления списка истории команд
+func refresh_history_list(history_list: ItemList):
+	history_list.clear()
+	
+	# Добавляем команды в обратном порядке (новые сверху)
+	for i in range(extracted_commands_history.size() - 1, -1, -1):
+		var entry = extracted_commands_history[i]
+		var display_text = entry.timestamp + " - " + entry.commands.substr(0, 100)
+		if entry.commands.length() > 100:
+			display_text += "..."
+		history_list.add_item(display_text)
+
 var smart_replace_button: Button
 
 func _enter_tree():
@@ -60,6 +140,12 @@ func _enter_tree():
 	
 	# Загружаем историю чата
 	load_chat_history()
+	
+	# Загружаем историю извлеченных команд
+	load_extracted_commands_history()
+	
+	# Инициализируем информацию о текущем скрипте
+	current_script_info = get_current_script_info()
 	
 	# Тестируем соединение
 	test_connection()
@@ -810,58 +896,10 @@ func show_smart_replace_dialog_v2():
 	tab_container.custom_minimum_size = Vector2(980, 700)
 	vbox.add_child(tab_container)
 	
-	# ===== ВКЛАДКА 1: INI =====
-	var ini_tab = VBoxContainer.new()
-	tab_container.add_child(ini_tab)
-	tab_container.set_tab_title(0, "INI")
-	
-	# Заголовок для INI вкладки
-	var ini_label = Label.new()
-	ini_label.text = "Вставьте INI команду от ИИ:"
-	ini_tab.add_child(ini_label)
-	
-	# Поле для INI
-	var ini_edit = TextEdit.new()
-	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с INI командами в блоках:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction, speed\n<cod>\nposition += direction * speed * delta\n<end_cod>\n=[end]=\n\n# Или несколько блоков:\n=[command]=\n[add_code]\n<cod>\nvar player_speed = 5.0\n<end_cod>\nposition_type=after_extends\n=[end]=\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction\n<cod>\nposition += direction * player_speed * delta\n<end_cod>\n=[end]=\n\n# Удаление строк:\n=[command]=\n[delete_code]\nlines=5, 10-15, 23\n=[end]=\n\n# Многострочный код с отступами:\n=[command]=\n[add_function]\nname=complex_function\n<cod>\nif condition:\n    print("True")\nelse:\n    print("False")\n<end_cod>\n=[end]=\n\n# Парсер автоматически найдет и выполнит команды между =[command]= и =[end]='
-	ini_edit.custom_minimum_size = Vector2(960, 600)
-	ini_tab.add_child(ini_edit)
-	
-	# Кнопки для INI вкладки
-	var ini_buttons = HBoxContainer.new()
-	ini_tab.add_child(ini_buttons)
-	
-	var preview_button = Button.new()
-	preview_button.text = "Предварительный просмотр"
-	preview_button.pressed.connect(func():
-		var ini_text = ini_edit.text
-		show_ini_preview(ini_text)
-	)
-	ini_buttons.add_child(preview_button)
-	
-	var execute_ini_button = Button.new()
-	execute_ini_button.text = "Выполнить INI"
-	execute_ini_button.pressed.connect(func():
-		var ini_text = ini_edit.text
-		execute_ini_command(ini_text)
-	)
-	ini_buttons.add_child(execute_ini_button)
-	
-	var clear_ini_button = Button.new()
-	clear_ini_button.text = "Очистить"
-	clear_ini_button.pressed.connect(func():
-		ini_edit.text = ""
-	)
-	ini_buttons.add_child(clear_ini_button)
-	
-	# ===== ВКЛАДКА 2: РУЧНАЯ РАБОТА =====
-	var manual_tab = VBoxContainer.new()
-	tab_container.add_child(manual_tab)
-	tab_container.set_tab_title(1, "Ручная работа")
-	
-	# ===== ВКЛАДКА 3: AI ЧАТ =====
+	# ===== ВКЛАДКА 1: AI ЧАТ =====
 	var ai_tab = VBoxContainer.new()
 	tab_container.add_child(ai_tab)
-	tab_container.set_tab_title(2, "AI Чат")
+	tab_container.set_tab_title(0, "AI Чат")
 	
 	# Заголовок для AI чата
 	var ai_label = Label.new()
@@ -935,15 +973,6 @@ func show_smart_replace_dialog_v2():
 	var control_buttons = HBoxContainer.new()
 	ai_tab.add_child(control_buttons)
 	
-	var clear_chat_button = Button.new()
-	clear_chat_button.text = "Очистить чат"
-	clear_chat_button.pressed.connect(func():
-		chat_history.clear()
-		chat_history_edit.text = ""
-		save_chat_history()  # Сохраняем пустую историю
-	)
-	control_buttons.add_child(clear_chat_button)
-	
 	# Поле для отображения извлеченных команд (скрыто по умолчанию)
 	var extracted_commands_label = Label.new()
 	extracted_commands_label.text = "Извлеченные INI команды (для отладки):"
@@ -956,6 +985,22 @@ func show_smart_replace_dialog_v2():
 	extracted_commands_edit.visible = false
 	ai_tab.add_child(extracted_commands_edit)
 	
+	# Кнопка применения команд
+	var apply_commands_button = Button.new()
+	apply_commands_button.text = "Применить команды"
+	apply_commands_button.pressed.connect(func():
+		if current_extracted_commands.strip_edges() != "":
+			execute_ini_command(current_extracted_commands)
+			add_to_extracted_commands_history(current_extracted_commands)
+			current_extracted_commands = ""
+			update_apply_button_color(apply_commands_button)
+			extracted_commands_edit.text = ""
+			print("Команды применены и добавлены в историю!")
+		else:
+			print("Нет команд для применения!")
+	)
+	control_buttons.add_child(apply_commands_button)
+	
 	# Кнопка для показа/скрытия команд (для отладки)
 	var show_commands_button = Button.new()
 	show_commands_button.text = "Показать извлеченные команды"
@@ -967,10 +1012,78 @@ func show_smart_replace_dialog_v2():
 	)
 	control_buttons.add_child(show_commands_button)
 	
+	# Кнопка очистки чата (добавляем после объявления всех переменных)
+	var clear_chat_button = Button.new()
+	clear_chat_button.text = "Очистить чат"
+	clear_chat_button.pressed.connect(func():
+		chat_history.clear()
+		chat_history_edit.text = ""
+		save_chat_history()  # Сохраняем пустую историю
+		is_first_message_in_session = true  # Сбрасываем флаг для новой сессии
+		
+		# Очищаем извлеченные команды и обновляем цвет кнопки
+		current_extracted_commands = ""
+		extracted_commands_edit.text = ""
+		update_apply_button_color(apply_commands_button)
+	)
+	control_buttons.add_child(clear_chat_button)
+	
 	# Сохраняем ссылки на элементы AI чата для доступа из других функций
 	ai_tab.set_meta("chat_history_edit", chat_history_edit)
 	ai_tab.set_meta("message_edit", message_edit)
 	ai_tab.set_meta("extracted_edit", extracted_commands_edit)
+	ai_tab.set_meta("apply_button", apply_commands_button)
+	
+	# Сохраняем ссылку на диалог для доступа из других функций
+	current_dialog = dialog
+	
+	# ===== ВКЛАДКА 2: INI =====
+	var ini_tab = VBoxContainer.new()
+	tab_container.add_child(ini_tab)
+	tab_container.set_tab_title(1, "INI")
+	
+	# Заголовок для INI вкладки
+	var ini_label = Label.new()
+	ini_label.text = "Вставьте INI команду от ИИ:"
+	ini_tab.add_child(ini_label)
+	
+	# Поле для INI
+	var ini_edit = TextEdit.new()
+	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с INI командами в блоках:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction, speed\n<cod>\nposition += direction * speed * delta\n<end_cod>\n=[end]=\n\n# Или несколько блоков:\n=[command]=\n[add_code]\n<cod>\nvar player_speed = 5.0\n<end_cod>\nposition_type=after_extends\n=[end]=\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction\n<cod>\nposition += direction * player_speed * delta\n<end_cod>\n=[end]=\n\n# Удаление строк:\n=[command]=\n[delete_code]\nlines=5, 10-15, 23\n=[end]=\n\n# Многострочный код с отступами:\n=[command]=\n[add_function]\nname=complex_function\n<cod>\nif condition:\n    print("True")\nelse:\n    print("False")\n<end_cod>\n=[end]=\n\n# Парсер автоматически найдет и выполнит команды между =[command]= и =[end]='
+	ini_edit.custom_minimum_size = Vector2(960, 600)
+	ini_tab.add_child(ini_edit)
+	
+	# Кнопки для INI вкладки
+	var ini_buttons = HBoxContainer.new()
+	ini_tab.add_child(ini_buttons)
+	
+	var preview_button = Button.new()
+	preview_button.text = "Предварительный просмотр"
+	preview_button.pressed.connect(func():
+		var ini_text = ini_edit.text
+		show_ini_preview(ini_text)
+	)
+	ini_buttons.add_child(preview_button)
+	
+	var execute_ini_button = Button.new()
+	execute_ini_button.text = "Выполнить INI"
+	execute_ini_button.pressed.connect(func():
+		var ini_text = ini_edit.text
+		execute_ini_command(ini_text)
+	)
+	ini_buttons.add_child(execute_ini_button)
+	
+	var clear_ini_button = Button.new()
+	clear_ini_button.text = "Очистить"
+	clear_ini_button.pressed.connect(func():
+		ini_edit.text = ""
+	)
+	ini_buttons.add_child(clear_ini_button)
+	
+	# ===== ВКЛАДКА 3: РУЧНАЯ РАБОТА =====
+	var manual_tab = VBoxContainer.new()
+	tab_container.add_child(manual_tab)
+	tab_container.set_tab_title(2, "Ручная работа")
 	
 	# Создаем подвкладки для ручной работы
 	var manual_tab_container = TabContainer.new()
@@ -1157,6 +1270,65 @@ func show_smart_replace_dialog_v2():
 	code_cancel_button.text = "Отмена"
 	code_cancel_button.pressed.connect(func(): dialog.hide())
 	code_buttons.add_child(code_cancel_button)
+	
+	# ===== ПОДВКЛАДКА: ИСТОРИЯ ИЗВЛЕЧЕННЫХ КОМАНД =====
+	var history_tab = VBoxContainer.new()
+	manual_tab_container.add_child(history_tab)
+	manual_tab_container.set_tab_title(2, "История команд")
+	
+	# Заголовок
+	var history_label = Label.new()
+	history_label.text = "История извлеченных и примененных команд:"
+	history_tab.add_child(history_label)
+	
+	# Поле для отображения деталей выбранной команды
+	var history_details_label = Label.new()
+	history_details_label.text = "Детали выбранной команды:"
+	history_tab.add_child(history_details_label)
+	
+	var history_details_edit = TextEdit.new()
+	history_details_edit.custom_minimum_size = Vector2(960, 200)
+	history_details_edit.editable = false
+	history_tab.add_child(history_details_edit)
+	
+	# Список истории команд
+	var history_list = ItemList.new()
+	history_list.custom_minimum_size = Vector2(960, 400)
+	history_list.item_selected.connect(func(index):
+		if index >= 0 and index < extracted_commands_history.size():
+			var entry = extracted_commands_history[index]
+			history_details_edit.text = "Время: " + entry.timestamp + "\n\nКоманды:\n" + entry.commands
+	)
+	history_tab.add_child(history_list)
+	
+	# Кнопки для работы с историей
+	var history_buttons = HBoxContainer.new()
+	history_tab.add_child(history_buttons)
+	
+	var refresh_history_button = Button.new()
+	refresh_history_button.text = "Обновить список"
+	refresh_history_button.pressed.connect(func():
+		refresh_history_list(history_list)
+	)
+	history_buttons.add_child(refresh_history_button)
+	
+	var clear_history_button = Button.new()
+	clear_history_button.text = "Очистить историю"
+	clear_history_button.pressed.connect(func():
+		extracted_commands_history.clear()
+		save_extracted_commands_history()
+		refresh_history_list(history_list)
+		history_details_edit.text = ""
+	)
+	history_buttons.add_child(clear_history_button)
+	
+	var history_cancel_button = Button.new()
+	history_cancel_button.text = "Закрыть"
+	history_cancel_button.pressed.connect(func(): dialog.hide())
+	history_buttons.add_child(history_cancel_button)
+	
+	# Загружаем историю в список
+	refresh_history_list(history_list)
 	
 	# Показываем диалог
 	get_editor_interface().get_base_control().add_child(dialog)
@@ -1886,6 +2058,9 @@ func send_message_to_ai(message: String):
 	# Устанавливаем флаг выполнения запроса
 	is_requesting = true
 	
+	# Сбрасываем флаг первого сообщения после отправки
+	is_first_message_in_session = false
+	
 	# Отправляем запрос к Gemini
 	call_gemini_api(prompt)
 
@@ -1925,7 +2100,7 @@ func add_message_to_chat(sender: String, message: String, type: String):
 		return
 	
 	print("TabContainer найден, ищем AI вкладку...")
-	var ai_tab = tab_container.get_child(2)  # AI Чат вкладка
+	var ai_tab = tab_container.get_child(0)  # AI Чат вкладка (теперь первая)
 	if not ai_tab:
 		print("AI вкладка не найдена!")
 		return
@@ -1960,16 +2135,165 @@ func get_current_file_content() -> String:
 				return content
 	return ""
 
+# Функция для получения информации о текущем скрипте и узле
+func get_current_script_info() -> Dictionary:
+	var info = {
+		"path": "",
+		"filename": "",
+		"node_path": "",
+		"hierarchy": ""
+	}
+	
+	print("=== ПОЛУЧЕНИЕ ИНФОРМАЦИИ О СКРИПТЕ ===")
+	
+	var editor_interface = get_editor_interface()
+	var script_editor = editor_interface.get_script_editor()
+	if script_editor:
+		var current_script = script_editor.get_current_script()
+		if current_script:
+			info.path = current_script.resource_path
+			info.filename = current_script.resource_path.get_file()
+			print("Найден скрипт: ", info.path)
+			print("Имя файла: ", info.filename)
+			
+			# Пытаемся найти узел, на котором висит этот скрипт
+			# Используем открытую сцену
+			var edited_scene_root = editor_interface.get_edited_scene_root()
+			if edited_scene_root:
+				print("Открытая сцена найдена: ", edited_scene_root.name)
+				print("Путь сцены: ", edited_scene_root.get_path())
+				
+				# Проверяем, что это не узел редактора
+				var scene_path = str(edited_scene_root.get_path())
+				if not scene_path.begins_with("/root/@EditorNode"):
+					var found_node = find_node_with_script(edited_scene_root, current_script)
+					if found_node:
+						info.node_path = found_node.get_path()
+						info.hierarchy = get_node_hierarchy(found_node)
+						print("Скрипт найден в сцене: ", info.node_path)
+					else:
+						print("Скрипт НЕ найден в открытой сцене")
+				else:
+					print("Это узел редактора, пропускаем")
+			else:
+				print("Открытая сцена НЕ найдена")
+		else:
+			print("Текущий скрипт НЕ найден")
+	else:
+		print("Редактор скриптов НЕ найден")
+	
+	print("Результат: ", info)
+	print("=== КОНЕЦ ПОЛУЧЕНИЯ ИНФОРМАЦИИ ===")
+	return info
+
+# Функция для поиска узла с определенным скриптом
+func find_node_with_script(node: Node, script: Script) -> Node:
+	if node.get_script() == script:
+		return node
+	
+	for child in node.get_children():
+		var found = find_node_with_script(child, script)
+		if found:
+			return found
+	
+	return null
+
+# Функция для получения иерархии узлов
+func get_node_hierarchy(node: Node) -> String:
+	var hierarchy = []
+	var current = node
+	
+	while current != null:
+		hierarchy.append(current.name)
+		current = current.get_parent()
+	
+	# Переворачиваем массив для правильного порядка (от корня к узлу)
+	hierarchy.reverse()
+	return "/".join(hierarchy)
+
+
+
 func create_chat_prompt(message: String, current_code: String) -> String:
-	var system_prompt = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
+	var instructions = ""
+	
+	# Всегда обновляем информацию о скрипте при каждом сообщении
+	current_script_info = get_current_script_info()
+	
+	# Добавляем инструкции только в первом сообщении сессии
+	if is_first_message_in_session:
+		instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
 
 Твоя задача - помогать пользователю редактировать код в GDScript файлах. Когда пользователь просит изменить код, ты должен:
 
 1. Ответить на естественном языке
 2. Скрыто вставить INI команды для выполнения изменений между маркерами =[command]= и =[end]=
 3. Пользователь не должен видеть эти команды, только твой текстовый ответ
+4. ВАЖНО: Если пользователь спрашивает о скрипте, обязательно упомяни информацию о файле, который ты видишь
+5. ВАЖНО: Если пользователь просит изменить код, ОБЯЗАТЕЛЬНО используй INI команды в формате =[command]= ... =[end]=
+6. ВАЖНО: НЕ пиши лишние объяснения о том, что ты не можешь изменять файлы. Просто генерируй INI команды
+7. ВАЖНО: НЕ упоминай "скрытые INI команды" или "эти команды не будут выполнены". Просто отвечай естественно
+8. ВАЖНО: Если пользователь просит изменить код, сразу давай краткий ответ и INI команды
 
-ТЕКУЩИЙ КОД ФАЙЛА:
+ФОРМАТ INI КОМАНД:
+Команды должны быть в формате:
+=[command]=
+[action]
+parameter=value
+<cod>
+код
+<end_cod>
+=[end]=
+
+ДОСТУПНЫЕ ДЕЙСТВИЯ:
+- [add_function] - добавить новую функцию
+- [replace_function] - заменить существующую функцию  
+- [delete_function] - удалить функцию
+- [add_code] - добавить код вне функций
+- [delete_code] - удалить строки кода
+
+ПРИМЕРЫ КОМАНД:
+
+Добавление функции:
+=[command]=
+[add_function]
+name=test_function
+comment=Тестовая функция
+<cod>
+	print("Это тестовая функция!")
+	return true
+<end_cod>
+=[end]=
+
+Добавление кода:
+=[command]=
+[add_code]
+position=2
+<cod>
+# Новые константы
+const TEST_VALUE = 100
+<end_cod>
+=[end]=
+
+"""
+	
+	# Формируем информацию о скрипте
+	var script_info = ""
+	if current_script_info.has("path") and current_script_info.path != "":
+		script_info = """ИНФОРМАЦИЯ О СКРИПТЕ:
+Файл: {filename}
+Путь: {path}
+Узел: {node_path}
+Иерархия: {hierarchy}
+
+""".format(current_script_info)
+		print("=== ИНФОРМАЦИЯ ДЛЯ AI ===")
+		print("Скрипт: ", current_script_info.filename)
+		print("Путь: ", current_script_info.path)
+		print("Узел: ", current_script_info.node_path)
+		print("Иерархия: ", current_script_info.hierarchy)
+		print("=== КОНЕЦ ИНФОРМАЦИИ ===")
+	
+	var system_prompt = instructions + script_info + """ТЕКУЩИЙ КОД ФАЙЛА:
 ```
 {current_code}
 ```
@@ -2119,15 +2443,25 @@ func process_ai_response(ai_response: String):
 	# Добавляем ответ AI в чат
 	add_message_to_chat("Gemini", text_response, "ai")
 	
-	# Если есть команды, выполняем их
+	# Если есть команды, показываем их для применения
 	if ini_commands != "":
 		# Показываем извлеченные команды в отладочном поле
 		show_extracted_commands(ini_commands)
-		
-		# Выполняем команды
-		print("Выполняю команды из ответа AI...")
-		execute_ini_command(ini_commands)
-		print("Команды AI выполнены!")
+		print("Команды извлечены и готовы к применению. Нажмите 'Применить команды' для их выполнения.")
+	else:
+		# Очищаем предыдущие команды
+		current_extracted_commands = ""
+		# Обновляем цвет кнопки
+		if current_dialog:
+			var vbox = current_dialog.get_child(0)
+			if vbox and vbox.get_child_count() > 0:
+				var tab_container = vbox.get_child(0)
+				if tab_container and tab_container.get_child_count() >= 3:
+					var ai_tab = tab_container.get_child(2)
+					if ai_tab:
+						var apply_button = ai_tab.get_meta("apply_button")
+						if apply_button:
+							update_apply_button_color(apply_button)
 
 func remove_ini_commands_from_text(text: String) -> String:
 	# Удаляем все блоки команд между =[command]= и =[end]=
@@ -2214,8 +2548,21 @@ func show_extracted_commands(ini_commands: String):
 		print("extracted_edit не найден в метаданных!")
 		return
 	
+	var apply_button = ai_tab.get_meta("apply_button")
+	if not apply_button:
+		print("apply_button не найден в метаданных!")
+		return
+	
+	# Сохраняем команды для применения
+	current_extracted_commands = ini_commands
+	
+	# Показываем команды в отладочном поле
 	extracted_edit.text = ini_commands
-	print("INI команды извлечены и показаны в отладочном поле")
+	
+	# Обновляем цвет кнопки
+	update_apply_button_color(apply_button)
+	
+	print("INI команды извлечены и готовы к применению")
 
 func extract_ini_commands(ai_response: String) -> String:
 	# Ищем блоки команд между =[command]= и =[end]=

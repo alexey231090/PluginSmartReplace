@@ -18,13 +18,21 @@ func foo(a, b, c, d, e):
 	print(a, b, c, d, e)
 
 # Описание функции
-func function_name(param1, param2):
-	print("Hello")
-	return true
-
 func test_function():
 	var condition = 4 < 8
 	if condition:
 		print("True")
 	else:
 		print("False")
+
+# Новая тестовая функция (ещё раз)
+
+#Изменённая тестовая функция
+func test_function_2():
+		print("Это изменённая тестовая функция!")
+		return true
+
+# Функция для вывода информации о скрипте
+func get_script_info():
+		print("Script path: ", self.script.resource_path)
+		print("Script name: ", self.script.name)
