@@ -2,8 +2,33 @@
 extends EditorPlugin
 
 # ===== GEMINI API НАСТРОЙКИ =====
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1/models/"
 var gemini_api_key: String = ""  # Будет загружаться из настроек
+
+# Доступные модели Gemini
+var available_models = {
+	"gemini-1.5-flash": {
+		"name": "Gemini 1.5 Flash",
+		"description": "Быстрая модель для быстрых ответов",
+		"max_tokens": 2000,
+		"daily_limit": 50
+	},
+	"gemini-1.5-pro": {
+		"name": "Gemini 1.5 Pro", 
+		"description": "Мощная модель для сложных задач",
+		"max_tokens": 4000,
+		"daily_limit": 50
+	},
+	"gemini-1.0-pro": {
+		"name": "Gemini 1.0 Pro",
+		"description": "Классическая модель Gemini",
+		"max_tokens": 3000,
+		"daily_limit": 50
+	}
+}
+
+# Текущая выбранная модель
+var current_model: String = "gemini-1.5-flash"
 const CHAT_HISTORY_FILE = "res://chat_history.json"
 
 # История чата для контекста
@@ -21,6 +46,11 @@ var system_messages = []
 # Флаг для предотвращения множественных запросов
 var is_requesting = false
 
+# Счетчики запросов для каждой модели
+var daily_requests_counts: Dictionary = {}
+var daily_requests_file: String = "user://daily_requests.json"
+var last_request_date: String = ""
+
 # Текущие извлеченные команды для применения
 var current_extracted_commands = ""
 
@@ -32,15 +62,15 @@ const EXTRACTED_COMMANDS_HISTORY_FILE = "res://extracted_commands_history.json"
 var is_first_message_in_session = true
 
 # Информация о текущем скрипте для кэширования
-var current_script_info = {
-	"path": "",
-	"filename": "",
-	"node_path": "",
-	"hierarchy": ""
-}
+var current_script_info = {"path": "", "filename": "", "node_path": "", "hierarchy": ""}
 
 # Функция для сохранения истории чата
 func save_chat_history():
+	# Проверяем, что узел в дереве
+	if not is_inside_tree():
+		print("Узел не в дереве, отменяем сохранение истории")
+		return
+	
 	var file = FileAccess.open(CHAT_HISTORY_FILE, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(chat_history))
@@ -101,6 +131,100 @@ func load_extracted_commands_history():
 	else:
 		extracted_commands_history = []
 
+# Функции для работы со счетчиками запросов
+func save_daily_requests():
+	var data = {
+		"counts": daily_requests_counts,
+		"date": last_request_date
+	}
+	var file = FileAccess.open(daily_requests_file, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(data))
+		file.close()
+
+func load_daily_requests():
+	if FileAccess.file_exists(daily_requests_file):
+		var file = FileAccess.open(daily_requests_file, FileAccess.READ)
+		if file:
+			var content = file.get_as_text()
+			file.close()
+			var json = JSON.new()
+			var parse_result = json.parse(content)
+			if parse_result == OK:
+				daily_requests_counts = json.data.get("counts", {})
+				last_request_date = json.data.get("date", "")
+			else:
+				daily_requests_counts = {}
+				last_request_date = ""
+		else:
+			daily_requests_counts = {}
+			last_request_date = ""
+	else:
+		daily_requests_counts = {}
+		last_request_date = ""
+
+func check_and_update_daily_requests():
+	var current_date = Time.get_datetime_string_from_system().split("T")[0]  # Получаем только дату
+	
+	if last_request_date != current_date:
+		# Новый день, сбрасываем все счетчики
+		daily_requests_counts.clear()
+		last_request_date = current_date
+		save_daily_requests()
+		print("Счетчики запросов сброшены для нового дня: ", current_date)
+	
+	# Инициализируем счетчик для текущей модели если его нет
+	if not daily_requests_counts.has(current_model):
+		daily_requests_counts[current_model] = 0
+	
+	return daily_requests_counts.get(current_model, 0)
+
+func increment_daily_requests():
+	if not daily_requests_counts.has(current_model):
+		daily_requests_counts[current_model] = 0
+	
+	daily_requests_counts[current_model] += 1
+	save_daily_requests()
+	
+	var current_count = daily_requests_counts[current_model]
+	var model_limit = available_models[current_model].get("daily_limit", 50)
+	
+	print("Запросов сегодня для ", current_model, ": ", current_count, "/", model_limit)
+	
+	# Обновляем счетчик в интерфейсе
+	update_requests_counter()
+	
+	# Предупреждение при приближении к лимиту
+	if current_count >= model_limit * 0.9:  # 90% от лимита
+		print("⚠️ ВНИМАНИЕ: Приближаетесь к лимиту запросов для ", current_model, "! (", current_count, "/", model_limit, ")")
+	
+	if current_count >= model_limit:
+		print("🚫 ДОСТИГНУТ ЛИМИТ ЗАПРОСОВ для ", current_model, "! (", current_count, "/", model_limit, ")")
+
+func update_requests_counter():
+	if current_dialog:
+		var vbox = current_dialog.get_child(0)
+		if vbox and vbox.get_child_count() > 0:
+			var tab_container = vbox.get_child(0)
+			if tab_container and tab_container.get_child_count() > 0:
+				var ai_tab = tab_container.get_child(0)
+				if ai_tab:
+					var requests_label = ai_tab.get_meta("requests_label")
+					if requests_label:
+						var current_count = daily_requests_counts.get(current_model, 0)
+						var model_limit = available_models[current_model].get("daily_limit", 50)
+						var model_name = available_models[current_model].get("name", current_model)
+						
+						requests_label.text = model_name + ": " + str(current_count) + "/" + str(model_limit)
+						
+						# Меняем цвет при приближении к лимиту
+						if current_count >= model_limit * 0.9:  # 90% от лимита
+							requests_label.modulate = Color.YELLOW
+						elif current_count >= model_limit:
+							requests_label.modulate = Color.RED
+						else:
+							requests_label.modulate = Color.WHITE
+
 # Функция для добавления команды в историю
 func add_to_extracted_commands_history(commands: String, timestamp: String = ""):
 	if commands.strip_edges() == "":
@@ -138,6 +262,18 @@ func refresh_history_list(history_list: ItemList):
 			display_text += "..."
 		history_list.add_item(display_text)
 
+# Функция для обновления списка истории команд (для новой вкладки)
+func refresh_commands_history_list(commands_history_list: ItemList):
+	commands_history_list.clear()
+	
+	# Добавляем команды в обратном порядке (новые сверху)
+	for i in range(extracted_commands_history.size() - 1, -1, -1):
+		var entry = extracted_commands_history[i]
+		var display_text = entry.timestamp + " - " + entry.commands.substr(0, 100)
+		if entry.commands.length() > 100:
+			display_text += "..."
+		commands_history_list.add_item(display_text)
+
 var smart_replace_button: Button
 
 func _enter_tree():
@@ -149,6 +285,10 @@ func _enter_tree():
 	
 	# Загружаем историю извлеченных команд
 	load_extracted_commands_history()
+	
+	# Загружаем счетчик запросов
+	load_daily_requests()
+	check_and_update_daily_requests()
 	
 	# Инициализируем информацию о текущем скрипте
 	current_script_info = get_current_script_info()
@@ -952,14 +1092,10 @@ func show_smart_replace_dialog_v2():
 	tab_container.add_child(ai_tab)
 	tab_container.set_tab_title(0, "AI Чат")
 	
-	# Создаем горизонтальный контейнер для чата и ошибок
-	var chat_errors_container = HBoxContainer.new()
-	ai_tab.add_child(chat_errors_container)
-	
-	# ===== ЛЕВАЯ КОЛОНКА: ЧАТ =====
+	# ===== КОЛОНКА ЧАТА =====
 	var chat_column = VBoxContainer.new()
-	chat_column.custom_minimum_size = Vector2(600, 400)
-	chat_errors_container.add_child(chat_column)
+	chat_column.custom_minimum_size = Vector2(960, 400)
+	ai_tab.add_child(chat_column)
 	
 	# Заголовок для AI чата
 	var ai_label = Label.new()
@@ -968,12 +1104,12 @@ func show_smart_replace_dialog_v2():
 	
 	# Область чата
 	var chat_area = VBoxContainer.new()
-	chat_area.custom_minimum_size = Vector2(580, 350)
+	chat_area.custom_minimum_size = Vector2(940, 350)
 	chat_column.add_child(chat_area)
 	
 	# Поле для отображения истории чата
 	var chat_history_edit = RichTextLabel.new()
-	chat_history_edit.custom_minimum_size = Vector2(580, 300)
+	chat_history_edit.custom_minimum_size = Vector2(940, 300)
 	chat_history_edit.bbcode_enabled = true
 	chat_history_edit.scroll_following = true
 	chat_area.add_child(chat_history_edit)
@@ -988,7 +1124,7 @@ func show_smart_replace_dialog_v2():
 	# Поле для ввода сообщения
 	var message_edit = LineEdit.new()
 	message_edit.placeholder_text = "Введите ваше сообщение для AI..."
-	message_edit.custom_minimum_size = Vector2(400, 30)
+	message_edit.custom_minimum_size = Vector2(700, 30)
 	message_edit.text_submitted.connect(func(text):
 		if text.strip_edges() != "" and not is_requesting:
 			send_message_to_ai(text)
@@ -1009,108 +1145,18 @@ func show_smart_replace_dialog_v2():
 	)
 	input_container.add_child(send_button)
 	
-	# ===== ПРАВАЯ КОЛОНКА: ОШИБКИ =====
-	var errors_column = VBoxContainer.new()
-	errors_column.custom_minimum_size = Vector2(350, 400)
-	chat_errors_container.add_child(errors_column)
+	# Счетчик запросов
+	var requests_label = Label.new()
+	var current_count = daily_requests_counts.get(current_model, 0)
+	var model_limit = available_models[current_model].get("daily_limit", 50)
+	var model_name = available_models[current_model].get("name", current_model)
+	requests_label.text = model_name + ": " + str(current_count) + "/" + str(model_limit)
+	requests_label.tooltip_text = "Счетчик запросов к Google Gemini API"
+	input_container.add_child(requests_label)
 	
-	# Заголовок для ошибок
-	var errors_label = Label.new()
-	errors_label.text = "Ошибки Godot (копируйте и отправляйте в чат):"
-	errors_column.add_child(errors_label)
+
 	
-	# Список ошибок
-	var errors_list = ItemList.new()
-	errors_list.custom_minimum_size = Vector2(330, 300)
-	errors_list.allow_reselect = true
-	errors_list.allow_rmb_select = true
-	errors_list.item_selected.connect(func(index):
-		var error_text = errors_list.get_item_text(index)
-		DisplayServer.clipboard_set(error_text)
-		print("Ошибка скопирована в буфер обмена: ", error_text)
-	)
-	errors_column.add_child(errors_list)
-	
-	# Кнопки управления ошибками
-	var errors_buttons = HBoxContainer.new()
-	errors_column.add_child(errors_buttons)
-	
-	# Кнопка копирования ошибки
-	var copy_error_button = Button.new()
-	copy_error_button.text = "Копировать"
-	copy_error_button.pressed.connect(func():
-		var selected_items = errors_list.get_selected_items()
-		if selected_items.size() > 0:
-			var error_text = errors_list.get_item_text(selected_items[0])
-			DisplayServer.clipboard_set(error_text)
-			print("Ошибка скопирована в буфер обмена!")
-	)
-	errors_buttons.add_child(copy_error_button)
-	
-	# Кнопка отправки ошибки в чат
-	var send_error_button = Button.new()
-	send_error_button.text = "Отправить в чат"
-	send_error_button.pressed.connect(func():
-		var selected_items = errors_list.get_selected_items()
-		if selected_items.size() > 0:
-			var error_text = errors_list.get_item_text(selected_items[0])
-			message_edit.text = "Ошибка: " + error_text
-			print("Ошибка добавлена в поле сообщения!")
-	)
-	errors_buttons.add_child(send_error_button)
-	
-	# Кнопка обновления списка ошибок
-	var refresh_errors_button = Button.new()
-	refresh_errors_button.text = "Обновить"
-	refresh_errors_button.pressed.connect(func():
-		update_errors_list(errors_list)
-	)
-	errors_buttons.add_child(refresh_errors_button)
-	
-	# Кнопка добавления ошибки вручную
-	var add_error_button = Button.new()
-	add_error_button.text = "Добавить ошибку"
-	add_error_button.pressed.connect(func():
-		show_add_error_dialog(errors_list)
-	)
-	errors_buttons.add_child(add_error_button)
-	
-	# Кнопка добавления системных сообщений
-	var add_system_button = Button.new()
-	add_system_button.text = "Добавить системное"
-	add_system_button.tooltip_text = "Добавить системное сообщение Godot"
-	add_system_button.pressed.connect(func():
-		add_system_message("--- Debug adapter server started on port 6006 ---", "INFO")
-		add_system_message("--- GDScript language server started on port 6005 ---", "INFO")
-		add_system_message("UID duplicate detected between res://plugin/icon.svg and res://addons/smart_replace/plugin/icon.svg.", "WARNING")
-		update_errors_list(errors_list)
-		print("Добавлены системные сообщения Godot!")
-	)
-	errors_buttons.add_child(add_system_button)
-	
-	# Кнопка очистки системных сообщений
-	var clear_system_button = Button.new()
-	clear_system_button.text = "Очистить системные"
-	clear_system_button.tooltip_text = "Очистить все системные сообщения"
-	clear_system_button.pressed.connect(func():
-		system_messages.clear()
-		update_errors_list(errors_list)
-		print("Системные сообщения очищены!")
-	)
-	errors_buttons.add_child(clear_system_button)
-	
-	# Загружаем ошибки при создании диалога
-	update_errors_list(errors_list)
-	
-	# Подключаем сигнал изменения файлов для автоматического обновления
-	var editor_interface = get_editor_interface()
-	var file_system = editor_interface.get_resource_filesystem()
-	if file_system:
-		file_system.filesystem_changed.connect(func():
-			# Обновляем список ошибок с небольшой задержкой
-			await get_tree().process_frame
-			update_errors_list(errors_list)
-		)
+
 	
 	# Поле для API ключа
 	var api_key_container = HBoxContainer.new()
@@ -1135,6 +1181,40 @@ func show_smart_replace_dialog_v2():
 		print("API ключ сохранен!")
 	)
 	api_key_container.add_child(save_api_button)
+	
+	# Селектор модели
+	var model_container = HBoxContainer.new()
+	ai_tab.add_child(model_container)
+	
+	var model_label = Label.new()
+	model_label.text = "Модель Gemini:"
+	model_container.add_child(model_label)
+	
+	var model_option = OptionButton.new()
+	model_option.custom_minimum_size = Vector2(300, 30)
+	
+	# Добавляем модели в селектор
+	for model_id in available_models.keys():
+		var model_info = available_models[model_id]
+		var display_text = model_info.get("name", model_id) + " - " + model_info.get("description", "")
+		model_option.add_item(display_text)
+		model_option.set_item_metadata(model_option.get_item_count() - 1, model_id)
+	
+	# Устанавливаем текущую модель
+	for i in range(model_option.get_item_count()):
+		if model_option.get_item_metadata(i) == current_model:
+			model_option.selected = i
+			break
+	
+	model_option.item_selected.connect(func(index):
+		var selected_model = model_option.get_item_metadata(index)
+		if selected_model != current_model:
+			current_model = selected_model
+			print("Переключена модель на: ", current_model)
+			save_api_key()  # Сохраняем выбор модели
+			update_requests_counter()  # Обновляем счетчик для новой модели
+	)
+	model_container.add_child(model_option)
 	
 	# Кнопки управления
 	var control_buttons = HBoxContainer.new()
@@ -1200,7 +1280,7 @@ func show_smart_replace_dialog_v2():
 	ai_tab.set_meta("message_edit", message_edit)
 	ai_tab.set_meta("extracted_edit", extracted_commands_edit)
 	ai_tab.set_meta("send_button", send_button)
-	ai_tab.set_meta("errors_list", errors_list)
+	ai_tab.set_meta("requests_label", requests_label)
 	ai_tab.set_meta("apply_button", apply_commands_button)
 	
 	# Сохраняем ссылку на диалог для доступа из других функций
@@ -1249,10 +1329,212 @@ func show_smart_replace_dialog_v2():
 	)
 	ini_buttons.add_child(clear_ini_button)
 	
-	# ===== ВКЛАДКА 3: РУЧНАЯ РАБОТА =====
+	# ===== ВКЛАДКА 3: ОШИБКИ =====
+	var errors_tab = VBoxContainer.new()
+	tab_container.add_child(errors_tab)
+	tab_container.set_tab_title(2, "Ошибки")
+	
+	# Заголовок для ошибок
+	var errors_tab_label = Label.new()
+	errors_tab_label.text = "Ошибки Godot (копируйте и отправляйте в чат):"
+	errors_tab.add_child(errors_tab_label)
+	
+	# Список ошибок
+	var errors_tab_list = ItemList.new()
+	errors_tab_list.custom_minimum_size = Vector2(940, 500)
+	errors_tab_list.allow_reselect = true
+	errors_tab_list.allow_rmb_select = true
+	errors_tab_list.item_selected.connect(func(index):
+		var error_text = errors_tab_list.get_item_text(index)
+		DisplayServer.clipboard_set(error_text)
+		print("Ошибка скопирована в буфер обмена: ", error_text)
+	)
+	errors_tab.add_child(errors_tab_list)
+	
+	# Кнопки управления ошибками
+	var errors_tab_buttons = HBoxContainer.new()
+	errors_tab.add_child(errors_tab_buttons)
+	
+	# Кнопка копирования ошибки
+	var copy_error_tab_button = Button.new()
+	copy_error_tab_button.text = "Копировать"
+	copy_error_tab_button.pressed.connect(func():
+		var selected_items = errors_tab_list.get_selected_items()
+		if selected_items.size() > 0:
+			var error_text = errors_tab_list.get_item_text(selected_items[0])
+			DisplayServer.clipboard_set(error_text)
+			print("Ошибка скопирована в буфер обмена!")
+	)
+	errors_tab_buttons.add_child(copy_error_tab_button)
+	
+	# Кнопка отправки ошибки в чат
+	var send_error_tab_button = Button.new()
+	send_error_tab_button.text = "Отправить в чат"
+	send_error_tab_button.pressed.connect(func():
+		var selected_items = errors_tab_list.get_selected_items()
+		if selected_items.size() > 0:
+			var error_text = errors_tab_list.get_item_text(selected_items[0])
+			# Находим поле сообщения в AI чате
+			if current_dialog:
+				var dialog_vbox = current_dialog.get_child(0)
+				if dialog_vbox and dialog_vbox.get_child_count() > 0:
+					var dialog_tab_container = dialog_vbox.get_child(0)
+					if dialog_tab_container and dialog_tab_container.get_child_count() > 0:
+						var dialog_ai_tab = dialog_tab_container.get_child(0)
+						if dialog_ai_tab:
+							var dialog_message_edit = dialog_ai_tab.get_meta("message_edit")
+							if dialog_message_edit:
+								dialog_message_edit.text = "Ошибка: " + error_text
+								# Переключаемся на вкладку AI чата
+								dialog_tab_container.current_tab = 0
+								print("Ошибка добавлена в поле сообщения и переключено на AI чат!")
+	)
+	errors_tab_buttons.add_child(send_error_tab_button)
+	
+	# Кнопка обновления списка ошибок
+	var refresh_errors_tab_button = Button.new()
+	refresh_errors_tab_button.text = "Обновить"
+	refresh_errors_tab_button.pressed.connect(func():
+		update_errors_list(errors_tab_list)
+	)
+	errors_tab_buttons.add_child(refresh_errors_tab_button)
+	
+	# Кнопка добавления ошибки вручную
+	var add_error_tab_button = Button.new()
+	add_error_tab_button.text = "Добавить ошибку"
+	add_error_tab_button.pressed.connect(func():
+		show_add_error_dialog(errors_tab_list)
+	)
+	errors_tab_buttons.add_child(add_error_tab_button)
+	
+	# Кнопка добавления системных сообщений
+	var add_system_tab_button = Button.new()
+	add_system_tab_button.text = "Добавить системное"
+	add_system_tab_button.tooltip_text = "Добавить системное сообщение Godot"
+	add_system_tab_button.pressed.connect(func():
+		add_system_message("--- Debug adapter server started on port 6006 ---", "INFO")
+		add_system_message("--- GDScript language server started on port 6005 ---", "INFO")
+		add_system_message("UID duplicate detected between res://plugin/icon.svg and res://addons/smart_replace/plugin/icon.svg.", "WARNING")
+		update_errors_list(errors_tab_list)
+		print("Добавлены системные сообщения Godot!")
+	)
+	errors_tab_buttons.add_child(add_system_tab_button)
+	
+	# Кнопка очистки системных сообщений
+	var clear_system_tab_button = Button.new()
+	clear_system_tab_button.text = "Очистить системные"
+	clear_system_tab_button.tooltip_text = "Очистить все системные сообщения"
+	clear_system_tab_button.pressed.connect(func():
+		system_messages.clear()
+		update_errors_list(errors_tab_list)
+		print("Системные сообщения очищены!")
+	)
+	errors_tab_buttons.add_child(clear_system_tab_button)
+	
+	# Обновляем список ошибок
+	update_errors_list(errors_tab_list)
+	
+	# ===== ВКЛАДКА 4: ИСТОРИЯ КОМАНД =====
+	var commands_history_tab = VBoxContainer.new()
+	tab_container.add_child(commands_history_tab)
+	tab_container.set_tab_title(3, "История команд")
+	
+	# Заголовок
+	var commands_history_label = Label.new()
+	commands_history_label.text = "История извлеченных и примененных INI команд:"
+	commands_history_tab.add_child(commands_history_label)
+	
+	# Список истории команд
+	var commands_history_list = ItemList.new()
+	commands_history_list.custom_minimum_size = Vector2(940, 300)
+	commands_history_list.allow_reselect = true
+	commands_history_list.allow_rmb_select = true
+	commands_history_tab.add_child(commands_history_list)
+	
+	# Поле для отображения деталей выбранной команды
+	var commands_details_label = Label.new()
+	commands_details_label.text = "Детали выбранной команды:"
+	commands_history_tab.add_child(commands_details_label)
+	
+	var commands_details_edit = TextEdit.new()
+	commands_details_edit.custom_minimum_size = Vector2(940, 200)
+	commands_details_edit.editable = false
+	commands_history_tab.add_child(commands_details_edit)
+	
+	# Кнопки для работы с историей команд
+	var commands_history_buttons = HBoxContainer.new()
+	commands_history_tab.add_child(commands_history_buttons)
+	
+	var refresh_commands_history_button = Button.new()
+	refresh_commands_history_button.text = "Обновить список"
+	refresh_commands_history_button.pressed.connect(func():
+		refresh_commands_history_list(commands_history_list)
+	)
+	commands_history_buttons.add_child(refresh_commands_history_button)
+	
+	var copy_command_button = Button.new()
+	copy_command_button.text = "Копировать команду"
+	copy_command_button.pressed.connect(func():
+		var selected_items = commands_history_list.get_selected_items()
+		if selected_items.size() > 0:
+			var index = selected_items[0]
+			if index >= 0 and index < extracted_commands_history.size():
+				var entry = extracted_commands_history[index]
+				DisplayServer.clipboard_set(entry.commands)
+				print("Команда скопирована в буфер обмена!")
+	)
+	commands_history_buttons.add_child(copy_command_button)
+	
+	var copy_to_ini_button = Button.new()
+	copy_to_ini_button.text = "Копировать в INI"
+	copy_to_ini_button.tooltip_text = "Копирует команду в INI вкладку для применения"
+	copy_to_ini_button.pressed.connect(func():
+		var selected_items = commands_history_list.get_selected_items()
+		if selected_items.size() > 0:
+			var index = selected_items[0]
+			if index >= 0 and index < extracted_commands_history.size():
+				var entry = extracted_commands_history[index]
+				# Находим INI поле и копируем туда команду
+				if current_dialog:
+					var copy_vbox = current_dialog.get_child(0)
+					if copy_vbox and copy_vbox.get_child_count() > 0:
+						var copy_tab_container = copy_vbox.get_child(0)
+						if copy_tab_container and copy_tab_container.get_child_count() > 1:
+							var copy_ini_tab = copy_tab_container.get_child(1)  # INI вкладка
+							if copy_ini_tab and copy_ini_tab.get_child_count() > 1:
+								var copy_ini_edit = copy_ini_tab.get_child(1)  # TextEdit для INI
+								if copy_ini_edit:
+									copy_ini_edit.text = entry.commands
+									# Переключаемся на INI вкладку
+									copy_tab_container.current_tab = 1
+									print("Команда скопирована в INI вкладку!")
+	)
+	commands_history_buttons.add_child(copy_to_ini_button)
+	
+	var clear_commands_history_button = Button.new()
+	clear_commands_history_button.text = "Очистить историю"
+	clear_commands_history_button.pressed.connect(func():
+		extracted_commands_history.clear()
+		save_extracted_commands_history()
+		refresh_commands_history_list(commands_history_list)
+		commands_details_edit.text = ""
+	)
+	commands_history_buttons.add_child(clear_commands_history_button)
+	
+	# Подключаем обработчик выбора команды
+	commands_history_list.item_selected.connect(func(index):
+		if index >= 0 and index < extracted_commands_history.size():
+			var entry = extracted_commands_history[index]
+			commands_details_edit.text = "Время: " + entry.timestamp + "\n\nКоманды:\n" + entry.commands
+	)
+	
+	# Загружаем историю в список
+	refresh_commands_history_list(commands_history_list)
+	
+	# ===== ВКЛАДКА 5: РУЧНАЯ РАБОТА =====
 	var manual_tab = VBoxContainer.new()
 	tab_container.add_child(manual_tab)
-	tab_container.set_tab_title(2, "Ручная работа")
+	tab_container.set_tab_title(4, "Ручная работа")
 	
 	# Создаем подвкладки для ручной работы
 	var manual_tab_container = TabContainer.new()
@@ -2217,6 +2499,19 @@ func send_message_to_ai(message: String):
 		add_message_to_chat("Система", "Подождите, предыдущий запрос еще выполняется...", "system")
 		return
 	
+	# Проверяем лимиты запросов
+	var current_count = check_and_update_daily_requests()
+	var model_limit = available_models[current_model].get("daily_limit", 50)
+	
+	if current_count >= model_limit:
+		var model_name = available_models[current_model].get("name", current_model)
+		add_message_to_chat("Система", "🚫 Достигнут дневной лимит запросов для " + model_name + " (" + str(current_count) + "/" + str(model_limit) + "). Попробуйте другую модель или завтра.", "system")
+		return
+	
+	if current_count >= model_limit * 0.9:  # 90% от лимита
+		var model_name = available_models[current_model].get("name", current_model)
+		add_message_to_chat("Система", "⚠️ Внимание: Приближаетесь к лимиту запросов для " + model_name + "! (" + str(current_count) + "/" + str(model_limit) + ")", "system")
+	
 	# Проверяем API ключ
 	if gemini_api_key == "":
 		print("API ключ не найден, показываем диалог настроек")
@@ -2259,6 +2554,11 @@ func send_message_to_ai(message: String):
 
 func add_message_to_chat(sender: String, message: String, type: String):
 	print("add_message_to_chat вызвана: ", sender, " - ", message)
+	
+	# Проверяем, что узел в дереве
+	if not is_inside_tree():
+		print("Узел не в дереве, отменяем добавление сообщения")
+		return
 	
 	# Добавляем сообщение в историю для API
 	var history_entry = {
@@ -2441,15 +2741,20 @@ parameter=value
 =[end]=
 
 ДОСТУПНЫЕ ДЕЙСТВИЯ:
-- [add_function] - добавить новую функцию
-- [replace_function] - заменить существующую функцию  
-- [delete_function] - удалить функцию
+- [add_function] - добавить НОВУЮ функцию (если функции с таким именем НЕТ)
+- [replace_function] - заменить СУЩЕСТВУЮЩУЮ функцию (если функция с таким именем УЖЕ ЕСТЬ)
+- [delete_function] или [remove_function] - удалить функцию
 - [add_code] - добавить код вне функций
-- [delete_code] - удалить строки кода
+- [delete_code] или [remove_code] - удалить строки кода
+
+ВАЖНО: 
+- Если функция УЖЕ СУЩЕСТВУЕТ в коде, используй [replace_function]
+- Если функции НЕТ в коде, используй [add_function]
+- НИКОГДА не используй [add_function] для существующих функций!
 
 ПРИМЕРЫ КОМАНД:
 
-Добавление функции:
+Добавление НОВОЙ функции:
 =[command]=
 [add_function]
 name=test_function
@@ -2457,6 +2762,16 @@ comment=Тестовая функция
 <cod>
 	print("Это тестовая функция!")
 	return true
+<end_cod>
+=[end]=
+
+ЗАМЕНА существующей функции:
+=[command]=
+[replace_function]
+name=test_function
+<cod>
+	print("Это измененная тестовая функция!")
+	return false
 <end_cod>
 =[end]=
 
@@ -2470,6 +2785,18 @@ position=2
 # Новые константы
 const TEST_VALUE = 100
 <end_cod>
+=[end]=
+
+Удаление функции:
+=[command]=
+[delete_function]
+name=old_function_name
+=[end]=
+
+Или альтернативный вариант:
+=[command]=
+[remove_function]
+name=old_function_name
 =[end]=
 
 """
@@ -2487,7 +2814,15 @@ const TEST_VALUE = 100
 	
 	# Добавляем краткое напоминание для последующих сообщений
 	if not is_first_message_in_session:
-		instructions = "НАПОМИНАНИЕ: Используй INI команды (=[command]= ... =[end]=) для любых изменений кода.\n\n"
+		instructions = """НАПОМИНАНИЕ: 
+- Используй INI команды (=[command]= ... =[end]=) для любых изменений кода
+- Для НОВЫХ функций используй [add_function]
+- Для СУЩЕСТВУЮЩИХ функций используй [replace_function]
+- Для удаления функций используй [delete_function] или [remove_function]
+- Для удаления кода используй [delete_code] или [remove_code]
+- Всегда проверяй существование функций перед добавлением
+
+"""
 		print("=== ИНФОРМАЦИЯ ДЛЯ AI ===")
 		print("Скрипт: ", current_script_info.filename)
 		print("Путь: ", current_script_info.path)
@@ -2525,9 +2860,18 @@ func call_gemini_api(prompt: String):
 	print("is_requesting: ", is_requesting)
 	print("Текущее время: ", Time.get_time_string_from_system())
 	
-	# Создаем HTTP запрос
+	# Увеличиваем счетчик запросов
+	increment_daily_requests()
+	
+	# Создаем HTTP запрос с улучшенной обработкой ошибок
 	var http = HTTPRequest.new()
 	http.timeout = 30  # 30 секунд таймаут
+	
+	# Проверяем, что узел все еще существует перед добавлением
+	if not is_inside_tree():
+		print("Узел не в дереве, отменяем запрос")
+		return
+	
 	add_child(http)
 	
 	# Формируем JSON для запроса Gemini
@@ -2549,8 +2893,8 @@ func call_gemini_api(prompt: String):
 	
 	var json_string = JSON.stringify(request_data)
 	
-	# Формируем URL с API ключом
-	var url = GEMINI_API_URL + "?key=" + gemini_api_key
+	# Формируем URL с API ключом и текущей моделью
+	var url = GEMINI_API_BASE_URL + current_model + ":generateContent?key=" + gemini_api_key
 	
 	# Настраиваем заголовки
 	var headers = [
@@ -2568,11 +2912,13 @@ func call_gemini_api(prompt: String):
 		http.queue_free()
 		return
 	
-	# Подключаем сигнал завершения
-	http.request_completed.connect(func(result, response_code, headers, body):
-		handle_gemini_response(result, response_code, headers, body)
-		http.queue_free()
-	)
+	# Подключаем сигнал завершения с защитой
+	if http and is_instance_valid(http):
+		http.request_completed.connect(func(result, response_code, headers, body):
+			handle_gemini_response(result, response_code, headers, body)
+			if http and is_instance_valid(http):
+				http.queue_free()
+		)
 
 func handle_gemini_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
 	print("=== НАЧАЛО handle_gemini_response ===")
@@ -2604,7 +2950,10 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 		print("Ошибка HTTP запроса: ", result)
 		print("Сбрасываем is_requesting = false из-за ошибки HTTP")
 		is_requesting = false
-		add_message_to_chat("Система", "Ошибка соединения с Google Gemini API", "system")
+		
+		# Безопасно добавляем сообщение об ошибке
+		if is_inside_tree():
+			add_message_to_chat("Система", "Ошибка соединения с Google Gemini API. Проверьте интернет-соединение.", "system")
 		return
 	
 	if response_code != 200:
@@ -2689,8 +3038,8 @@ func process_ai_response(ai_response: String):
 			var vbox = current_dialog.get_child(0)
 			if vbox and vbox.get_child_count() > 0:
 				var tab_container = vbox.get_child(0)
-				if tab_container and tab_container.get_child_count() >= 3:
-					var ai_tab = tab_container.get_child(2)
+				if tab_container and tab_container.get_child_count() > 0:
+					var ai_tab = tab_container.get_child(0)  # AI Чат вкладка (первая)
 					if ai_tab:
 						var apply_button = ai_tab.get_meta("apply_button")
 						if apply_button:
@@ -2721,24 +3070,33 @@ func show_api_key_dialog():
 	add_message_to_chat("Система", "Для использования AI чата необходимо настроить API ключ Google Gemini. Введите ключ в поле выше и нажмите 'Сохранить ключ'.", "system")
 
 func save_api_key():
-	# Сохраняем API ключ в настройках проекта
+	# Сохраняем API ключ и модель в настройках проекта
 	var config = ConfigFile.new()
 	config.set_value("smart_replace", "gemini_api_key", gemini_api_key)
+	config.set_value("smart_replace", "current_model", current_model)
 	config.save("res://smart_replace_config.ini")
 
 func load_api_key():
-	# Загружаем API ключ из настроек
+	# Загружаем API ключ и модель из настроек
 	var config = ConfigFile.new()
 	var error = config.load("res://smart_replace_config.ini")
 	if error == OK:
 		gemini_api_key = config.get_value("smart_replace", "gemini_api_key", "")
+		current_model = config.get_value("smart_replace", "current_model", "gemini-1.5-flash")
 	else:
-		# Если файл не существует, оставляем пустую строку
+		# Если файл не существует, оставляем пустую строку и модель по умолчанию
 		gemini_api_key = ""
+		current_model = "gemini-1.5-flash"
 
 # Функция для тестирования соединения
 func test_connection():
 	print("Тестируем соединение с Google...")
+	
+	# Проверяем, что узел в дереве
+	if not is_inside_tree():
+		print("Узел не в дереве, отменяем тест соединения")
+		return
+	
 	var http = HTTPRequest.new()
 	http.timeout = 10
 	add_child(http)
@@ -2749,10 +3107,13 @@ func test_connection():
 	else:
 		print("Соединение с Google успешно")
 	
-	http.request_completed.connect(func(result, response_code, headers, body):
-		print("Тест соединения завершен: код ", response_code)
-		http.queue_free()
-	)
+	# Безопасно подключаем сигнал
+	if http and is_instance_valid(http):
+		http.request_completed.connect(func(result, response_code, headers, body):
+			print("Тест соединения завершен: код ", response_code)
+			if http and is_instance_valid(http):
+				http.queue_free()
+		)
 
 func show_extracted_commands(ini_commands: String):
 	# Используем сохраненную ссылку на диалог

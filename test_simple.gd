@@ -11,9 +11,9 @@ func _ready():
 
 # Двигает игрока в заданном направлении
 func move_player(direction, speed):
-	print("Player moved!")
-
-#Теперь функция foo принимает 5 параметров
+		var velocity = direction * speed
+		print("Player moved!", velocity)
+		
 func foo(a, b, c, d, e):
 	print(a, b, c, d, e)
 
@@ -39,4 +39,6 @@ func get_script_info():
 
 # Новая функция
 func new_function():
-	print("Это новая функция!")
+		print("Привет, человеки!")
+func test_function_3():
+	pass

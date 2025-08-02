@@ -15,4 +15,5 @@ func theta_plugin_test():
 
 # Проверяет, жив ли игрок
 func is_alive():
+		print("Проверка жизни игрока...")
 		return health > 0
