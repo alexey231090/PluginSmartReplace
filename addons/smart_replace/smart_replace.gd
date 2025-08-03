@@ -310,6 +310,8 @@ func create_toolbar_button() -> Button:
 	smart_replace_button = Button.new()
 	smart_replace_button.text = "Smart Replace"
 	smart_replace_button.tooltip_text = "Умная замена функций"
+	smart_replace_button.custom_minimum_size = Vector2(150, 30)  # Увеличиваем размер кнопки для мобильного
+	smart_replace_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	smart_replace_button.pressed.connect(_on_smart_replace_pressed)
 	return smart_replace_button
 
@@ -1065,7 +1067,7 @@ func show_smart_replace_dialog_v2():
 	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Smart Replace - Умная замена функций"
-	dialog.size = Vector2(1000, 800)
+	dialog.size = Vector2(1200, 900)  # Увеличиваем размер для мобильного использования
 	
 	# Сохраняем ссылку на диалог
 	current_dialog = dialog
@@ -1084,7 +1086,7 @@ func show_smart_replace_dialog_v2():
 	
 	# Создаем вкладки
 	var tab_container = TabContainer.new()
-	tab_container.custom_minimum_size = Vector2(980, 700)
+	tab_container.custom_minimum_size = Vector2(1180, 800)  # Увеличиваем размер для мобильного использования
 	vbox.add_child(tab_container)
 	
 	# ===== ВКЛАДКА 1: AI ЧАТ =====
@@ -1092,48 +1094,38 @@ func show_smart_replace_dialog_v2():
 	tab_container.add_child(ai_tab)
 	tab_container.set_tab_title(0, "AI Чат")
 	
-	# ===== КОЛОНКА ЧАТА =====
+	# ===== КОЛОНКА ЧАТА (МОБИЛЬНАЯ ВЕРСИЯ) =====
 	var chat_column = VBoxContainer.new()
-	chat_column.custom_minimum_size = Vector2(960, 400)
+	chat_column.custom_minimum_size = Vector2(1160, 500)  # Увеличиваем размер
 	ai_tab.add_child(chat_column)
 	
 	# Заголовок для AI чата
 	var ai_label = Label.new()
 	ai_label.text = "AI Чат - общайтесь с Google Gemini и автоматически редактируйте код:"
+	ai_label.add_theme_font_size_override("font_size", 16)  # Увеличиваем размер шрифта
 	chat_column.add_child(ai_label)
 	
-	# Область чата
-	var chat_area = VBoxContainer.new()
-	chat_area.custom_minimum_size = Vector2(940, 350)
-	chat_column.add_child(chat_area)
-	
-	# Поле для отображения истории чата
-	var chat_history_edit = RichTextLabel.new()
-	chat_history_edit.custom_minimum_size = Vector2(940, 300)
-	chat_history_edit.bbcode_enabled = true
-	chat_history_edit.scroll_following = true
-	chat_area.add_child(chat_history_edit)
-	
-	# Загружаем историю чата в интерфейс
-	load_chat_to_ui(chat_history_edit)
-	
-	# Контейнер для ввода сообщения
+	# ===== ПОЛЕ ВВОДА СООБЩЕНИЙ В ВЕРХНЕЙ ЧАСТИ =====
 	var input_container = HBoxContainer.new()
+	input_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту для мобильного использования
 	chat_column.add_child(input_container)
 	
-	# Поле для ввода сообщения
+	# Поле для ввода сообщения (больше для мобильного)
 	var message_edit = LineEdit.new()
 	message_edit.placeholder_text = "Введите ваше сообщение для AI..."
-	message_edit.custom_minimum_size = Vector2(700, 30)
+	message_edit.custom_minimum_size = Vector2(800, 40)  # Увеличиваем размер для мобильного
+	message_edit.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	message_edit.text_submitted.connect(func(text):
 		if text.strip_edges() != "" and not is_requesting:
 			send_message_to_ai(text)
 	)
 	input_container.add_child(message_edit)
 	
-	# Кнопка отправки
+	# Кнопка отправки (больше для мобильного)
 	var send_button = Button.new()
 	send_button.text = "Отправить"
+	send_button.custom_minimum_size = Vector2(120, 40)  # Увеличиваем размер кнопки
+	send_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	send_button.pressed.connect(func():
 		var message = message_edit.text
 		if message.strip_edges() != "":
@@ -1145,36 +1137,60 @@ func show_smart_replace_dialog_v2():
 	)
 	input_container.add_child(send_button)
 	
-	# Счетчик запросов
+	# Счетчик запросов (больше для мобильного)
 	var requests_label = Label.new()
 	var current_count = daily_requests_counts.get(current_model, 0)
 	var model_limit = available_models[current_model].get("daily_limit", 50)
 	var model_name = available_models[current_model].get("name", current_model)
 	requests_label.text = model_name + ": " + str(current_count) + "/" + str(model_limit)
 	requests_label.tooltip_text = "Счетчик запросов к Google Gemini API"
+	requests_label.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
+	requests_label.custom_minimum_size = Vector2(200, 40)  # Увеличиваем размер
 	input_container.add_child(requests_label)
 	
-
+	# Область чата
+	var chat_area = VBoxContainer.new()
+	chat_area.custom_minimum_size = Vector2(1140, 400)  # Увеличиваем размер
+	chat_column.add_child(chat_area)
+	
+	# Поле для отображения истории чата (больше для мобильного)
+	var chat_history_edit = RichTextLabel.new()
+	chat_history_edit.custom_minimum_size = Vector2(1140, 350)  # Увеличиваем размер
+	chat_history_edit.bbcode_enabled = true
+	chat_history_edit.scroll_following = true
+	chat_area.add_child(chat_history_edit)
+	
+	# Загружаем историю чата в интерфейс
+	load_chat_to_ui(chat_history_edit)
+	
+	# Счетчик запросов уже добавлен выше в input_container
 	
 
 	
-	# Поле для API ключа
+
+	
+	# Поле для API ключа (мобильная версия)
 	var api_key_container = HBoxContainer.new()
+	api_key_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
 	ai_tab.add_child(api_key_container)
 	
 	var api_key_label = Label.new()
 	api_key_label.text = "API ключ Google Gemini:"
+	api_key_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	api_key_container.add_child(api_key_label)
 	
 	var api_key_edit = LineEdit.new()
 	api_key_edit.placeholder_text = "AIza... (введите ваш Google Gemini API ключ)"
 	api_key_edit.secret = true
-	api_key_edit.custom_minimum_size = Vector2(400, 30)
+	api_key_edit.custom_minimum_size = Vector2(600, 40)  # Увеличиваем размер для мобильного
+	api_key_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	api_key_edit.text = gemini_api_key if gemini_api_key != null else ""  # Показываем текущий ключ
 	api_key_container.add_child(api_key_edit)
 	
 	var save_api_button = Button.new()
 	save_api_button.text = "Сохранить ключ"
+	save_api_button.custom_minimum_size = Vector2(150, 40)  # Увеличиваем размер кнопки
+	save_api_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	save_api_button.pressed.connect(func():
 		gemini_api_key = api_key_edit.text
 		save_api_key()
@@ -1182,16 +1198,19 @@ func show_smart_replace_dialog_v2():
 	)
 	api_key_container.add_child(save_api_button)
 	
-	# Селектор модели
+	# Селектор модели (мобильная версия)
 	var model_container = HBoxContainer.new()
+	model_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
 	ai_tab.add_child(model_container)
 	
 	var model_label = Label.new()
 	model_label.text = "Модель Gemini:"
+	model_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	model_container.add_child(model_label)
 	
 	var model_option = OptionButton.new()
-	model_option.custom_minimum_size = Vector2(300, 30)
+	model_option.custom_minimum_size = Vector2(400, 40)  # Увеличиваем размер для мобильного
+	model_option.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	
 	# Добавляем модели в селектор
 	for model_id in available_models.keys():
@@ -1216,8 +1235,9 @@ func show_smart_replace_dialog_v2():
 	)
 	model_container.add_child(model_option)
 	
-	# Кнопки управления
+	# Кнопки управления (мобильная версия)
 	var control_buttons = HBoxContainer.new()
+	control_buttons.custom_minimum_size = Vector2(1140, 60)  # Увеличиваем высоту для мобильного
 	ai_tab.add_child(control_buttons)
 	
 	# Поле для отображения извлеченных команд (скрыто по умолчанию)
@@ -1232,9 +1252,11 @@ func show_smart_replace_dialog_v2():
 	extracted_commands_edit.visible = false
 	ai_tab.add_child(extracted_commands_edit)
 	
-	# Кнопка применения команд
+	# Кнопка применения команд (мобильная версия)
 	var apply_commands_button = Button.new()
 	apply_commands_button.text = "Применить команды"
+	apply_commands_button.custom_minimum_size = Vector2(180, 50)  # Увеличиваем размер кнопки
+	apply_commands_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	apply_commands_button.pressed.connect(func():
 		if current_extracted_commands.strip_edges() != "":
 			execute_ini_command(current_extracted_commands)
@@ -1248,9 +1270,11 @@ func show_smart_replace_dialog_v2():
 	)
 	control_buttons.add_child(apply_commands_button)
 	
-	# Кнопка для показа/скрытия команд (для отладки)
+	# Кнопка для показа/скрытия команд (для отладки) - мобильная версия
 	var show_commands_button = Button.new()
 	show_commands_button.text = "Показать извлеченные команды"
+	show_commands_button.custom_minimum_size = Vector2(200, 50)  # Увеличиваем размер кнопки
+	show_commands_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	show_commands_button.pressed.connect(func():
 		var is_visible = extracted_commands_label.visible
 		extracted_commands_label.visible = !is_visible
@@ -1259,9 +1283,11 @@ func show_smart_replace_dialog_v2():
 	)
 	control_buttons.add_child(show_commands_button)
 	
-	# Кнопка очистки чата (добавляем после объявления всех переменных)
+	# Кнопка очистки чата (мобильная версия)
 	var clear_chat_button = Button.new()
 	clear_chat_button.text = "Очистить чат"
+	clear_chat_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	clear_chat_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	clear_chat_button.pressed.connect(func():
 		chat_history.clear()
 		chat_history_edit.text = ""
@@ -1291,23 +1317,28 @@ func show_smart_replace_dialog_v2():
 	tab_container.add_child(ini_tab)
 	tab_container.set_tab_title(1, "INI")
 	
-	# Заголовок для INI вкладки
+	# Заголовок для INI вкладки (мобильная версия)
 	var ini_label = Label.new()
 	ini_label.text = "Вставьте INI команду от ИИ:"
+	ini_label.add_theme_font_size_override("font_size", 16)  # Увеличиваем размер шрифта
 	ini_tab.add_child(ini_label)
 	
-	# Поле для INI
+	# Поле для INI (мобильная версия)
 	var ini_edit = TextEdit.new()
 	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с INI командами в блоках:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction, speed\n<cod>\nposition += direction * speed * delta\n<end_cod>\n=[end]=\n\n# Или несколько блоков:\n=[command]=\n[add_code]\n<cod>\nvar player_speed = 5.0\n<end_cod>\nposition_type=after_extends\n=[end]=\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction\n<cod>\nposition += direction * player_speed * delta\n<end_cod>\n=[end]=\n\n# Удаление строк:\n=[command]=\n[delete_code]\nlines=5, 10-15, 23\n=[end]=\n\n# Многострочный код с отступами:\n=[command]=\n[add_function]\nname=complex_function\n<cod>\nif condition:\n    print("True")\nelse:\n    print("False")\n<end_cod>\n=[end]=\n\n# Парсер автоматически найдет и выполнит команды между =[command]= и =[end]='
-	ini_edit.custom_minimum_size = Vector2(960, 600)
+	ini_edit.custom_minimum_size = Vector2(1160, 650)  # Увеличиваем размер для мобильного
+	ini_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	ini_tab.add_child(ini_edit)
 	
-	# Кнопки для INI вкладки
+	# Кнопки для INI вкладки (мобильная версия)
 	var ini_buttons = HBoxContainer.new()
+	ini_buttons.custom_minimum_size = Vector2(1160, 60)  # Увеличиваем высоту для мобильного
 	ini_tab.add_child(ini_buttons)
 	
 	var preview_button = Button.new()
 	preview_button.text = "Предварительный просмотр"
+	preview_button.custom_minimum_size = Vector2(200, 50)  # Увеличиваем размер кнопки
+	preview_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	preview_button.pressed.connect(func():
 		var ini_text = ini_edit.text
 		show_ini_preview(ini_text)
@@ -1316,6 +1347,8 @@ func show_smart_replace_dialog_v2():
 	
 	var execute_ini_button = Button.new()
 	execute_ini_button.text = "Выполнить INI"
+	execute_ini_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	execute_ini_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	execute_ini_button.pressed.connect(func():
 		var ini_text = ini_edit.text
 		execute_ini_command(ini_text)
@@ -1324,6 +1357,8 @@ func show_smart_replace_dialog_v2():
 	
 	var clear_ini_button = Button.new()
 	clear_ini_button.text = "Очистить"
+	clear_ini_button.custom_minimum_size = Vector2(120, 50)  # Увеличиваем размер кнопки
+	clear_ini_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	clear_ini_button.pressed.connect(func():
 		ini_edit.text = ""
 	)
@@ -1334,16 +1369,18 @@ func show_smart_replace_dialog_v2():
 	tab_container.add_child(errors_tab)
 	tab_container.set_tab_title(2, "Ошибки")
 	
-	# Заголовок для ошибок
+	# Заголовок для ошибок (мобильная версия)
 	var errors_tab_label = Label.new()
 	errors_tab_label.text = "Ошибки Godot (копируйте и отправляйте в чат):"
+	errors_tab_label.add_theme_font_size_override("font_size", 16)  # Увеличиваем размер шрифта
 	errors_tab.add_child(errors_tab_label)
 	
-	# Список ошибок
+	# Список ошибок (мобильная версия)
 	var errors_tab_list = ItemList.new()
-	errors_tab_list.custom_minimum_size = Vector2(940, 500)
+	errors_tab_list.custom_minimum_size = Vector2(1140, 550)  # Увеличиваем размер для мобильного
 	errors_tab_list.allow_reselect = true
 	errors_tab_list.allow_rmb_select = true
+	errors_tab_list.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	errors_tab_list.item_selected.connect(func(index):
 		var error_text = errors_tab_list.get_item_text(index)
 		DisplayServer.clipboard_set(error_text)
@@ -1351,13 +1388,16 @@ func show_smart_replace_dialog_v2():
 	)
 	errors_tab.add_child(errors_tab_list)
 	
-	# Кнопки управления ошибками
+	# Кнопки управления ошибками (мобильная версия)
 	var errors_tab_buttons = HBoxContainer.new()
+	errors_tab_buttons.custom_minimum_size = Vector2(1140, 60)  # Увеличиваем высоту для мобильного
 	errors_tab.add_child(errors_tab_buttons)
 	
-	# Кнопка копирования ошибки
+	# Кнопка копирования ошибки (мобильная версия)
 	var copy_error_tab_button = Button.new()
 	copy_error_tab_button.text = "Копировать"
+	copy_error_tab_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	copy_error_tab_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	copy_error_tab_button.pressed.connect(func():
 		var selected_items = errors_tab_list.get_selected_items()
 		if selected_items.size() > 0:
@@ -1367,9 +1407,11 @@ func show_smart_replace_dialog_v2():
 	)
 	errors_tab_buttons.add_child(copy_error_tab_button)
 	
-	# Кнопка отправки ошибки в чат
+	# Кнопка отправки ошибки в чат (мобильная версия)
 	var send_error_tab_button = Button.new()
 	send_error_tab_button.text = "Отправить в чат"
+	send_error_tab_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	send_error_tab_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	send_error_tab_button.pressed.connect(func():
 		var selected_items = errors_tab_list.get_selected_items()
 		if selected_items.size() > 0:
@@ -1391,26 +1433,32 @@ func show_smart_replace_dialog_v2():
 	)
 	errors_tab_buttons.add_child(send_error_tab_button)
 	
-	# Кнопка обновления списка ошибок
+	# Кнопка обновления списка ошибок (мобильная версия)
 	var refresh_errors_tab_button = Button.new()
 	refresh_errors_tab_button.text = "Обновить"
+	refresh_errors_tab_button.custom_minimum_size = Vector2(120, 50)  # Увеличиваем размер кнопки
+	refresh_errors_tab_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	refresh_errors_tab_button.pressed.connect(func():
 		update_errors_list(errors_tab_list)
 	)
 	errors_tab_buttons.add_child(refresh_errors_tab_button)
 	
-	# Кнопка добавления ошибки вручную
+	# Кнопка добавления ошибки вручную (мобильная версия)
 	var add_error_tab_button = Button.new()
 	add_error_tab_button.text = "Добавить ошибку"
+	add_error_tab_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	add_error_tab_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	add_error_tab_button.pressed.connect(func():
 		show_add_error_dialog(errors_tab_list)
 	)
 	errors_tab_buttons.add_child(add_error_tab_button)
 	
-	# Кнопка добавления системных сообщений
+	# Кнопка добавления системных сообщений (мобильная версия)
 	var add_system_tab_button = Button.new()
 	add_system_tab_button.text = "Добавить системное"
 	add_system_tab_button.tooltip_text = "Добавить системное сообщение Godot"
+	add_system_tab_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	add_system_tab_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	add_system_tab_button.pressed.connect(func():
 		add_system_message("--- Debug adapter server started on port 6006 ---", "INFO")
 		add_system_message("--- GDScript language server started on port 6005 ---", "INFO")
@@ -1420,10 +1468,12 @@ func show_smart_replace_dialog_v2():
 	)
 	errors_tab_buttons.add_child(add_system_tab_button)
 	
-	# Кнопка очистки системных сообщений
+	# Кнопка очистки системных сообщений (мобильная версия)
 	var clear_system_tab_button = Button.new()
 	clear_system_tab_button.text = "Очистить системные"
 	clear_system_tab_button.tooltip_text = "Очистить все системные сообщения"
+	clear_system_tab_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	clear_system_tab_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	clear_system_tab_button.pressed.connect(func():
 		system_messages.clear()
 		update_errors_list(errors_tab_list)
