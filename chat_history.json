@@ -1,1 +1,1 @@
-[]
+[{"content":"Удали функцию new_function","role":"user"},{"content":"Хорошо, я удалил функцию `new_function` из скрипта `test_simple.gd`.\n\n","role":"ai"},{"content":"ок , теперь добавб функцию super test  и измени функцию test_function_2, это всё за раз сделай(это для тэста)","role":"user"},{"content":"Хорошо, я добавил функцию `super_test` и изменил функцию `test_function_2` в скрипте `test_simple.gd`.\n\n\n","role":"ai"}]

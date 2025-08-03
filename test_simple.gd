@@ -29,16 +29,16 @@ func test_function():
 
 #Изменённая тестовая функция
 func test_function_2():
-	print("Это изменённая тестовая функция!")
-	return true
-
-# Функция для вывода информации о скрипте
+		print("Это ещё раз изменённая тестовая функция!")
+		return false
 func get_script_info():
 	print("Script path: ", self.script.resource_path)
 	print("Script name: ", self.script.name)
 
 # Новая функция
-func new_function():
-		print("Привет, человеки!")
 func test_function_3():
 	pass
+
+# Супер тестовая функция
+func super_test():
+		print("Это супер тестовая функция!")

@@ -64,6 +64,117 @@ var is_first_message_in_session = true
 # Информация о текущем скрипте для кэширования
 var current_script_info = {"path": "", "filename": "", "node_path": "", "hierarchy": ""}
 
+# ===== СИСТЕМА ЛОГИРОВАНИЯ ДЛЯ ДИАГНОСТИКИ =====
+var debug_log_file: String = "user://smart_replace_debug.log"
+var debug_log_enabled: bool = true
+
+# Функция для записи в лог
+func write_debug_log(message: String, level: String = "INFO"):
+	if not debug_log_enabled:
+		return
+	
+	var timestamp = Time.get_datetime_string_from_system()
+	var log_entry = "[%s] [%s] %s" % [timestamp, level, message]
+	
+	var file = FileAccess.open(debug_log_file, FileAccess.READ_WRITE)
+	if file:
+		file.seek_end()
+		file.store_line(log_entry)
+		file.close()
+	else:
+		# Если не удалось открыть файл, создаем новый
+		file = FileAccess.open(debug_log_file, FileAccess.WRITE)
+		if file:
+			file.store_line(log_entry)
+			file.close()
+	
+	# Также выводим в консоль для отладки
+	print(log_entry)
+
+# Функция для очистки лога
+func clear_debug_log():
+	var file = FileAccess.open(debug_log_file, FileAccess.WRITE)
+	if file:
+		file.close()
+		print("Лог очищен")
+
+# Функция для получения содержимого лога
+func get_debug_log() -> String:
+	if not FileAccess.file_exists(debug_log_file):
+		return "Лог файл не найден"
+	
+	var file = FileAccess.open(debug_log_file, FileAccess.READ)
+	if file:
+		var content = file.get_as_text()
+		file.close()
+		return content
+	return "Не удалось прочитать лог файл"
+
+# Функция для показа диалога с логом
+func show_debug_log_dialog():
+	write_debug_log("Открываем диалог просмотра лога", "INFO")
+	
+	var log_dialog = AcceptDialog.new()
+	log_dialog.title = "Лог плагина Smart Replace"
+	log_dialog.size = Vector2(1000, 700)
+	
+	var vbox = VBoxContainer.new()
+	log_dialog.add_child(vbox)
+	
+	var log_label = Label.new()
+	log_label.text = "Лог плагина (для диагностики проблем):"
+	log_label.add_theme_font_size_override("font_size", 16)
+	vbox.add_child(log_label)
+	
+	var log_edit = TextEdit.new()
+	log_edit.text = get_debug_log()
+	log_edit.editable = false
+	log_edit.custom_minimum_size = Vector2(980, 500)
+	log_edit.add_theme_font_size_override("font_size", 12)
+	vbox.add_child(log_edit)
+	
+	var buttons = HBoxContainer.new()
+	vbox.add_child(buttons)
+	
+	var refresh_button = Button.new()
+	refresh_button.text = "Обновить лог"
+	refresh_button.custom_minimum_size = Vector2(150, 40)
+	refresh_button.add_theme_font_size_override("font_size", 14)
+	refresh_button.pressed.connect(func():
+		log_edit.text = get_debug_log()
+	)
+	buttons.add_child(refresh_button)
+	
+	var clear_log_button = Button.new()
+	clear_log_button.text = "Очистить лог"
+	clear_log_button.custom_minimum_size = Vector2(150, 40)
+	clear_log_button.add_theme_font_size_override("font_size", 14)
+	clear_log_button.pressed.connect(func():
+		clear_debug_log()
+		log_edit.text = get_debug_log()
+	)
+	buttons.add_child(clear_log_button)
+	
+	var copy_log_button = Button.new()
+	copy_log_button.text = "Копировать лог"
+	copy_log_button.custom_minimum_size = Vector2(150, 40)
+	copy_log_button.add_theme_font_size_override("font_size", 14)
+	copy_log_button.pressed.connect(func():
+		DisplayServer.clipboard_set(log_edit.text)
+		print("Лог скопирован в буфер обмена")
+	)
+	buttons.add_child(copy_log_button)
+	
+	var close_button = Button.new()
+	close_button.text = "Закрыть"
+	close_button.custom_minimum_size = Vector2(100, 40)
+	close_button.add_theme_font_size_override("font_size", 14)
+	close_button.pressed.connect(func(): log_dialog.hide())
+	buttons.add_child(close_button)
+	
+	get_editor_interface().get_base_control().add_child(log_dialog)
+	log_dialog.popup_centered()
+
 # Функция для сохранения истории чата
 func save_chat_history():
 	# Проверяем, что узел в дереве
@@ -277,34 +388,51 @@ func refresh_commands_history_list(commands_history_list: ItemList):
 var smart_replace_button: Button
 
 func _enter_tree():
+	write_debug_log("Плагин Smart Replace инициализируется", "INFO")
+	
 	# Загружаем API ключ
+	write_debug_log("Загружаем API ключ", "INFO")
 	load_api_key()
 	
 	# Загружаем историю чата
+	write_debug_log("Загружаем историю чата", "INFO")
 	load_chat_history()
 	
 	# Загружаем историю извлеченных команд
+	write_debug_log("Загружаем историю извлеченных команд", "INFO")
 	load_extracted_commands_history()
 	
 	# Загружаем счетчик запросов
+	write_debug_log("Загружаем счетчик запросов", "INFO")
 	load_daily_requests()
 	check_and_update_daily_requests()
 	
 	# Инициализируем информацию о текущем скрипте
+	write_debug_log("Инициализируем информацию о текущем скрипте", "INFO")
 	current_script_info = get_current_script_info()
 	
 	# Тестируем соединение
+	write_debug_log("Тестируем соединение", "INFO")
 	test_connection()
 	
 	# Создаем кнопку в панели инструментов
+	write_debug_log("Создаем кнопку в панели инструментов", "INFO")
 	add_control_to_container(CONTAINER_TOOLBAR, create_toolbar_button())
+	
+	write_debug_log("Плагин Smart Replace успешно инициализирован", "INFO")
 
 func _exit_tree():
+	write_debug_log("Плагин Smart Replace завершает работу", "INFO")
+	
 	# Закрываем все диалоги перед выходом
+	write_debug_log("Закрываем все диалоги", "INFO")
 	close_all_dialogs()
 	
 	# Удаляем кнопку из панели инструментов
+	write_debug_log("Удаляем кнопку из панели инструментов", "INFO")
 	remove_control_from_container(CONTAINER_TOOLBAR, smart_replace_button)
+	
+	write_debug_log("Плагин Smart Replace успешно завершил работу", "INFO")
 
 func create_toolbar_button() -> Button:
 	smart_replace_button = Button.new()
@@ -316,15 +444,20 @@ func create_toolbar_button() -> Button:
 	return smart_replace_button
 
 func _on_smart_replace_pressed():
+	write_debug_log("Нажата кнопка Smart Replace", "INFO")
+	
 	# Проверяем, не открыт ли уже диалог
 	if current_dialog and is_instance_valid(current_dialog) and current_dialog.visible:
+		write_debug_log("Диалог уже открыт, фокусируемся на нем", "INFO")
 		print("Диалог уже открыт, фокусируемся на нем")
 		current_dialog.grab_focus()
 		return
 	
 	# Закрываем все другие диалоги перед открытием нового
+	write_debug_log("Закрываем все другие диалоги", "INFO")
 	close_all_dialogs()
 	
+	write_debug_log("Открываем диалог Smart Replace", "INFO")
 	show_smart_replace_dialog_v2()
 
 # ===== INI ПАРСЕР ФУНКЦИИ =====
@@ -838,27 +971,29 @@ func show_preview_dialog(preview_text: String, ini_text: String):
 	dialog.popup_centered()
 
 func close_all_dialogs():
-	# Закрываем все диалоги AcceptDialog
-	var base_control = get_editor_interface().get_base_control()
-	for child in base_control.get_children():
-		if child is AcceptDialog:
-			child.hide()
-			child.queue_free()
+	write_debug_log("Начинаем закрытие диалогов плагина", "INFO")
 	
-	# Закрываем диалоги из нашего массива
+	# Закрываем только диалоги из нашего массива
+	var our_dialog_count = 0
 	for dialog in open_dialogs:
 		if is_instance_valid(dialog):
+			write_debug_log("Закрываем наш диалог: " + str(dialog), "INFO")
 			dialog.hide()
 			dialog.queue_free()
+			our_dialog_count += 1
+	
+	write_debug_log("Закрыто наших диалогов: " + str(our_dialog_count), "INFO")
 	
 	# Очищаем массив открытых диалогов
 	open_dialogs.clear()
 	current_dialog = null
 	
-	print("Все диалоги закрыты")
+	write_debug_log("Диалоги плагина закрыты", "INFO")
+	print("Диалоги плагина закрыты")
 
 # Функция для принудительного закрытия всех диалогов (для отладки)
 func force_close_all_dialogs():
+	write_debug_log("Принудительное закрытие всех диалогов...", "WARNING")
 	print("Принудительное закрытие всех диалогов...")
 	close_all_dialogs()
 
@@ -1057,27 +1192,39 @@ func generate_preview_for_ini(ini_text: String) -> String:
 	return preview_text
 
 func show_smart_replace_dialog_v2():
+	write_debug_log("Начинаем создание диалога Smart Replace", "INFO")
+	
 	# Проверяем, не открыт ли уже диалог
 	if current_dialog and is_instance_valid(current_dialog) and current_dialog.visible:
+		write_debug_log("Диалог уже открыт!", "WARNING")
 		print("Диалог уже открыт!")
+		current_dialog.grab_focus()
 		return
 	
-	# Закрываем все предыдущие диалоги
+	# Закрываем только наши предыдущие диалоги
+	write_debug_log("Закрываем предыдущие диалоги плагина", "INFO")
 	close_all_dialogs()
 	
+	write_debug_log("Создаем новый диалог", "INFO")
 	var dialog = AcceptDialog.new()
 	dialog.title = "Smart Replace - Умная замена функций"
 	dialog.size = Vector2(1200, 900)  # Увеличиваем размер для мобильного использования
+	dialog.exclusive = false  # Делаем диалог неэксклюзивным
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_MAIN_WINDOW_SCREEN  # Центрируем на главном окне
+	write_debug_log("Диалог создан как неэксклюзивный", "INFO")
 	
 	# Сохраняем ссылку на диалог
 	current_dialog = dialog
 	open_dialogs.append(dialog)
+	write_debug_log("Диалог добавлен в массив open_dialogs, размер: " + str(open_dialogs.size()), "INFO")
 	
 	# Добавляем обработчик закрытия диалога
 	dialog.visibility_changed.connect(func():
 		if not dialog.visible:
+			write_debug_log("Диалог стал невидимым, очищаем ссылки", "INFO")
 			current_dialog = null
 			open_dialogs.erase(dialog)
+			write_debug_log("Размер open_dialogs после удаления: " + str(open_dialogs.size()), "INFO")
 	)
 	
 	# Создаем основной контейнер
@@ -1300,6 +1447,16 @@ func show_smart_replace_dialog_v2():
 		update_apply_button_color(apply_commands_button)
 	)
 	control_buttons.add_child(clear_chat_button)
+	
+	# Кнопка просмотра лога (для диагностики)
+	var view_log_button = Button.new()
+	view_log_button.text = "Просмотр лога"
+	view_log_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	view_log_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
+	view_log_button.pressed.connect(func():
+		show_debug_log_dialog()
+	)
+	control_buttons.add_child(view_log_button)
 	
 	# Сохраняем ссылки на элементы AI чата для доступа из других функций
 	ai_tab.set_meta("chat_history_edit", chat_history_edit)
@@ -1832,8 +1989,17 @@ func show_smart_replace_dialog_v2():
 	refresh_history_list(history_list)
 	
 	# Показываем диалог
+	write_debug_log("Добавляем диалог в base_control", "INFO")
 	get_editor_interface().get_base_control().add_child(dialog)
-	dialog.popup_centered()
+	
+	# Проверяем, что диалог успешно добавлен
+	if dialog.get_parent():
+		write_debug_log("Диалог успешно добавлен в дерево", "INFO")
+		# Показываем диалог с проверкой
+		dialog.popup_centered()
+		write_debug_log("Диалог показан", "INFO")
+	else:
+		write_debug_log("ОШИБКА: Диалог не был добавлен в дерево", "ERROR")
 
 func load_functions_list(function_list: ItemList):
 	var editor_interface = get_editor_interface()
@@ -2540,50 +2706,64 @@ func replace_function_content_with_new_signature_in_text(content: String, functi
 # ===== AI ЧАТ ФУНКЦИИ =====
 
 func send_message_to_ai(message: String):
+	write_debug_log("Начинаем отправку сообщения к AI: " + message.substr(0, 100) + "...", "INFO")
 	
 	if message.strip_edges() == "":
+		write_debug_log("Сообщение пустое, отменяем отправку", "WARNING")
 		return
 	
 	# Проверяем, не выполняется ли уже запрос
 	if is_requesting:
+		write_debug_log("Предыдущий запрос еще выполняется", "WARNING")
 		add_message_to_chat("Система", "Подождите, предыдущий запрос еще выполняется...", "system")
 		return
 	
 	# Проверяем лимиты запросов
+	write_debug_log("Проверяем лимиты запросов", "INFO")
 	var current_count = check_and_update_daily_requests()
 	var model_limit = available_models[current_model].get("daily_limit", 50)
 	
 	if current_count >= model_limit:
+		write_debug_log("Достигнут дневной лимит запросов: " + str(current_count) + "/" + str(model_limit), "WARNING")
 		var model_name = available_models[current_model].get("name", current_model)
 		add_message_to_chat("Система", "🚫 Достигнут дневной лимит запросов для " + model_name + " (" + str(current_count) + "/" + str(model_limit) + "). Попробуйте другую модель или завтра.", "system")
 		return
 	
 	if current_count >= model_limit * 0.9:  # 90% от лимита
+		write_debug_log("Приближаемся к лимиту запросов: " + str(current_count) + "/" + str(model_limit), "WARNING")
 		var model_name = available_models[current_model].get("name", current_model)
 		add_message_to_chat("Система", "⚠️ Внимание: Приближаетесь к лимиту запросов для " + model_name + "! (" + str(current_count) + "/" + str(model_limit) + ")", "system")
 	
 	# Проверяем API ключ
 	if gemini_api_key == "":
+		write_debug_log("API ключ не найден, показываем диалог настроек", "ERROR")
 		print("API ключ не найден, показываем диалог настроек")
 		show_api_key_dialog()
 		return
 	
+	write_debug_log("Добавляем сообщение в чат", "INFO")
 	print("Добавляем сообщение в чат...")
 	# Добавляем сообщение пользователя в чат
 	add_message_to_chat("Вы", message, "user")
 	
 	# Получаем текущий код файла для контекста
+	write_debug_log("Получаем текущий код файла", "INFO")
 	var current_code = get_current_file_content()
+	write_debug_log("Текущий код файла получен, длина: " + str(current_code.length()), "INFO")
 	print("Текущий код файла получен, длина: ", current_code.length())
 	
 	# Формируем промпт для AI
+	write_debug_log("Формируем промпт для AI", "INFO")
 	var prompt = create_chat_prompt(message, current_code)
+	write_debug_log("Промпт сформирован, отправляем запрос к Gemini", "INFO")
 	print("Промпт сформирован, отправляем запрос к OpenAI...")
 	
 	# Устанавливаем флаг выполнения запроса
 	is_requesting = true
+	write_debug_log("Устанавливаем флаг is_requesting = true", "INFO")
 	
 	# Отключаем поле ввода на время запроса
+	write_debug_log("Отключаем поле ввода на время запроса", "INFO")
 	if current_dialog:
 		var vbox = current_dialog.get_child(0)
 		if vbox and vbox.get_child_count() > 0:
@@ -2600,6 +2780,7 @@ func send_message_to_ai(message: String):
 	is_first_message_in_session = false
 	
 	# Отправляем запрос к Gemini
+	write_debug_log("Вызываем call_gemini_api", "INFO")
 	call_gemini_api(prompt)
 
 func add_message_to_chat(sender: String, message: String, type: String):
@@ -2905,23 +3086,32 @@ name=old_function_name
 	})
 
 func call_gemini_api(prompt: String):
+	write_debug_log("=== НАЧАЛО call_gemini_api ===", "INFO")
+	write_debug_log("Длина промпта: " + str(prompt.length()), "INFO")
+	write_debug_log("is_requesting: " + str(is_requesting), "INFO")
+	write_debug_log("Текущее время: " + Time.get_time_string_from_system(), "INFO")
+	
 	print("=== НАЧАЛО call_gemini_api ===")
 	print("Длина промпта: ", prompt.length())
 	print("is_requesting: ", is_requesting)
 	print("Текущее время: ", Time.get_time_string_from_system())
 	
 	# Увеличиваем счетчик запросов
+	write_debug_log("Увеличиваем счетчик запросов", "INFO")
 	increment_daily_requests()
 	
 	# Создаем HTTP запрос с улучшенной обработкой ошибок
+	write_debug_log("Создаем HTTP запрос", "INFO")
 	var http = HTTPRequest.new()
 	http.timeout = 30  # 30 секунд таймаут
 	
 	# Проверяем, что узел все еще существует перед добавлением
 	if not is_inside_tree():
+		write_debug_log("Узел не в дереве, отменяем запрос", "ERROR")
 		print("Узел не в дереве, отменяем запрос")
 		return
 	
+	write_debug_log("Добавляем HTTP запрос как дочерний узел", "INFO")
 	add_child(http)
 	
 	# Формируем JSON для запроса Gemini
@@ -2952,11 +3142,15 @@ func call_gemini_api(prompt: String):
 	]
 	
 	# Отправляем запрос
+	write_debug_log("Отправляем запрос на URL: " + url, "INFO")
+	write_debug_log("Длина JSON данных: " + str(json_string.length()), "INFO")
+	write_debug_log("=== ОТПРАВКА HTTP ЗАПРОСА ===", "INFO")
 	print("Отправляем запрос на URL: ", url)
 	print("Длина JSON данных: ", json_string.length())
 	print("=== ОТПРАВКА HTTP ЗАПРОСА ===")
 	var error = http.request(url, headers, HTTPClient.METHOD_POST, json_string)
 	if error != OK:
+		write_debug_log("Ошибка при отправке HTTP запроса: " + str(error), "ERROR")
 		print("Ошибка при отправке HTTP запроса: ", error)
 		print("Коды ошибок: 0=OK, 1=RESULT_CHUNKED_BODY_SIZE_MISMATCH, 2=RESULT_CANT_RESOLVE, 3=RESULT_CANT_RESOLVE_PROXY, 4=RESULT_CANT_CONNECT, 5=RESULT_CANT_CONNECT_PROXY, 6=RESULT_SSL_HANDSHAKE_ERROR, 7=RESULT_CANT_ACCEPT, 8=RESULT_TIMEOUT")
 		http.queue_free()
@@ -2971,6 +3165,11 @@ func call_gemini_api(prompt: String):
 		)
 
 func handle_gemini_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+	write_debug_log("=== НАЧАЛО handle_gemini_response ===", "INFO")
+	write_debug_log("Код ответа: " + str(response_code), "INFO")
+	write_debug_log("is_requesting до сброса: " + str(is_requesting), "INFO")
+	write_debug_log("Текущее время: " + Time.get_time_string_from_system(), "INFO")
+	
 	print("=== НАЧАЛО handle_gemini_response ===")
 	print("Код ответа: ", response_code)
 	print("is_requesting до сброса: ", is_requesting)
