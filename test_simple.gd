@@ -42,3 +42,8 @@ func test_function_3():
 # Супер тестовая функция
 func super_test():
 		print("Это супер тестовая функция!")
+
+# Тестовая функция для проверки
+func test_function_test():
+		print("Это тестовая функция для теста!")
+		return true

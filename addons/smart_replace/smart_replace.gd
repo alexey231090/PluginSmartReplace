@@ -1,34 +1,54 @@
 @tool
 extends EditorPlugin
 
-# ===== GEMINI API НАСТРОЙКИ =====
+# ===== API НАСТРОЙКИ =====
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1/models/"
-var gemini_api_key: String = ""  # Будет загружаться из настроек
+const OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Доступные модели Gemini
+var gemini_api_key: String = ""  # Будет загружаться из настроек
+var openrouter_api_key: String = ""  # Будет загружаться из настроек
+
+# Выбор провайдера AI
+var current_provider: String = "gemini"  # "gemini" или "openrouter"
+
+# Доступные модели Gemini (бесплатные)
 var available_models = {
 	"gemini-1.5-flash": {
-		"name": "Gemini 1.5 Flash",
-		"description": "Быстрая модель для быстрых ответов",
+		"name": "🚀 Gemini Flash",
+		"description": "Быстрая модель для быстрых ответов (бесплатно)",
 		"max_tokens": 2000,
-		"daily_limit": 50
-	},
-	"gemini-1.5-pro": {
-		"name": "Gemini 1.5 Pro", 
-		"description": "Мощная модель для сложных задач",
+		"daily_limit": 50,
+		"provider": "gemini"
+	}
+}
+
+# Доступные модели OpenRouter (бесплатные)
+var openrouter_models = {
+	"openai/gpt-4o-mini": {
+		"name": "🤖 GPT-4o Mini",
+		"description": "Быстрая и эффективная модель OpenAI (бесплатно)",
 		"max_tokens": 4000,
-		"daily_limit": 50
+		"daily_limit": 500,
+		"provider": "openrouter"
 	},
-	"gemini-1.0-pro": {
-		"name": "Gemini 1.0 Pro",
-		"description": "Классическая модель Gemini",
+	"deepseek/deepseek-r1:free": {
+		"name": "💻 DeepSeek R1",
+		"description": "Мощная модель для программирования и логики (бесплатно)",
+		"max_tokens": 8000,
+		"daily_limit": 1000,
+		"provider": "openrouter"
+	},
+	"meta-llama/llama-3.1-8b-instruct": {
+		"name": "🦙 Llama 3.1 8B",
+		"description": "Легкая и быстрая модель Meta (бесплатно)",
 		"max_tokens": 3000,
-		"daily_limit": 50
+		"daily_limit": 1000,
+		"provider": "openrouter"
 	}
 }
 
 # Текущая выбранная модель
-var current_model: String = "gemini-1.5-flash"
+var current_model: String = "openai/gpt-4o-mini"  # По умолчанию используем OpenRouter (бесплатная модель)
 const CHAT_HISTORY_FILE = "res://chat_history.json"
 
 # История чата для контекста
@@ -109,6 +129,67 @@ func get_debug_log() -> String:
 		file.close()
 		return content
 	return "Не удалось прочитать лог файл"
+
+# ===== OPENROUTER API ФУНКЦИИ =====
+
+# Функция для загрузки API ключа OpenRouter
+func load_openrouter_api_key():
+	var config_file = "user://smart_replace_config.ini"
+	if FileAccess.file_exists(config_file):
+		var file = FileAccess.open(config_file, FileAccess.READ)
+		if file:
+			var content = file.get_as_text()
+			file.close()
+			var lines = content.split("\n")
+			for line in lines:
+				if line.begins_with("openrouter_api_key="):
+					openrouter_api_key = line.split("=", true, 1)[1].strip_edges()
+					write_debug_log("OpenRouter API ключ загружен", "INFO")
+					return
+	write_debug_log("OpenRouter API ключ не найден", "WARNING")
+
+# Функция для сохранения API ключа OpenRouter
+func save_openrouter_api_key():
+	var config_file = "user://smart_replace_config.ini"
+	var content = ""
+	
+	# Читаем существующий файл
+	if FileAccess.file_exists(config_file):
+		var file = FileAccess.open(config_file, FileAccess.READ)
+		if file:
+			content = file.get_as_text()
+			file.close()
+	
+	# Обновляем или добавляем OpenRouter ключ
+	var lines = content.split("\n")
+	var found = false
+	for i in range(lines.size()):
+		if lines[i].begins_with("openrouter_api_key="):
+			lines[i] = "openrouter_api_key=" + openrouter_api_key
+			found = true
+			break
+	
+	if not found:
+		lines.append("openrouter_api_key=" + openrouter_api_key)
+	
+	# Сохраняем файл
+	var file = FileAccess.open(config_file, FileAccess.WRITE)
+	if file:
+		file.store_string("\n".join(lines))
+		file.close()
+		write_debug_log("OpenRouter API ключ сохранен", "INFO")
+
+# Функция для получения текущей модели с учетом провайдера
+func get_current_model_info() -> Dictionary:
+	if current_provider == "gemini":
+		return available_models.get(current_model, {})
+	else:
+		return openrouter_models.get(current_model, {})
+
+# Функция для получения лимита запросов текущей модели
+func get_current_model_limit() -> int:
+	var model_info = get_current_model_info()
+	return model_info.get("daily_limit", 50)
 
 # Функция для показа диалога с логом
 func show_debug_log_dialog():
@@ -298,7 +379,8 @@ func increment_daily_requests():
 	save_daily_requests()
 	
 	var current_count = daily_requests_counts[current_model]
-	var model_limit = available_models[current_model].get("daily_limit", 50)
+	var model_info = get_current_model_info()
+	var model_limit = model_info.get("daily_limit", 50)
 	
 	print("Запросов сегодня для ", current_model, ": ", current_count, "/", model_limit)
 	
@@ -323,8 +405,9 @@ func update_requests_counter():
 					var requests_label = ai_tab.get_meta("requests_label")
 					if requests_label:
 						var current_count = daily_requests_counts.get(current_model, 0)
-						var model_limit = available_models[current_model].get("daily_limit", 50)
-						var model_name = available_models[current_model].get("name", current_model)
+						var model_info = get_current_model_info()
+						var model_limit = model_info.get("daily_limit", 50)
+						var model_name = model_info.get("name", current_model)
 						
 						requests_label.text = model_name + ": " + str(current_count) + "/" + str(model_limit)
 						
@@ -335,6 +418,32 @@ func update_requests_counter():
 							requests_label.modulate = Color.RED
 						else:
 							requests_label.modulate = Color.WHITE
+
+# Функция для обновления интерфейса API ключей
+func update_api_key_interface():
+	if current_dialog:
+		var vbox = current_dialog.get_child(0)
+		if vbox and vbox.get_child_count() > 0:
+			var tab_container = vbox.get_child(0)
+			if tab_container and tab_container.get_child_count() > 0:
+				var ai_tab = tab_container.get_child(0)
+				if ai_tab:
+					# Обновляем видимость контейнеров API ключей
+					var gemini_container = ai_tab.get_meta("gemini_api_container")
+					var openrouter_container = ai_tab.get_meta("openrouter_api_container")
+					
+					if gemini_container:
+						gemini_container.visible = current_provider == "gemini"
+					if openrouter_container:
+						openrouter_container.visible = current_provider == "openrouter"
+					
+					# Обновляем список моделей
+					var update_model_list = ai_tab.get_meta("update_model_list")
+					if update_model_list:
+						update_model_list.call()
+					
+					# Обновляем счетчик запросов
+					update_requests_counter()
 
 # Функция для добавления команды в историю
 func add_to_extracted_commands_history(commands: String, timestamp: String = ""):
@@ -390,9 +499,10 @@ var smart_replace_button: Button
 func _enter_tree():
 	write_debug_log("Плагин Smart Replace инициализируется", "INFO")
 	
-	# Загружаем API ключ
-	write_debug_log("Загружаем API ключ", "INFO")
+	# Загружаем API ключи
+	write_debug_log("Загружаем API ключи", "INFO")
 	load_api_key()
+	load_openrouter_api_key()
 	
 	# Загружаем историю чата
 	write_debug_log("Загружаем историю чата", "INFO")
@@ -1287,10 +1397,11 @@ func show_smart_replace_dialog_v2():
 	# Счетчик запросов (больше для мобильного)
 	var requests_label = Label.new()
 	var current_count = daily_requests_counts.get(current_model, 0)
-	var model_limit = available_models[current_model].get("daily_limit", 50)
-	var model_name = available_models[current_model].get("name", current_model)
+	var model_info = get_current_model_info()
+	var model_limit = model_info.get("daily_limit", 50)
+	var model_name = model_info.get("name", current_model)
 	requests_label.text = model_name + ": " + str(current_count) + "/" + str(model_limit)
-	requests_label.tooltip_text = "Счетчик запросов к Google Gemini API"
+	requests_label.tooltip_text = "Счетчик запросов к " + ("Google Gemini API" if current_provider == "gemini" else "OpenRouter API")
 	requests_label.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	requests_label.custom_minimum_size = Vector2(200, 40)  # Увеличиваем размер
 	input_container.add_child(requests_label)
@@ -1316,34 +1427,103 @@ func show_smart_replace_dialog_v2():
 	
 
 	
-	# Поле для API ключа (мобильная версия)
-	var api_key_container = HBoxContainer.new()
-	api_key_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
-	ai_tab.add_child(api_key_container)
+	# ===== ВЫБОР ПРОВАЙДЕРА =====
+	var provider_container = HBoxContainer.new()
+	provider_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
+	ai_tab.add_child(provider_container)
 	
-	var api_key_label = Label.new()
-	api_key_label.text = "API ключ Google Gemini:"
-	api_key_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
-	api_key_container.add_child(api_key_label)
+	var provider_label = Label.new()
+	provider_label.text = "Провайдер AI:"
+	provider_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
+	provider_container.add_child(provider_label)
 	
-	var api_key_edit = LineEdit.new()
-	api_key_edit.placeholder_text = "AIza... (введите ваш Google Gemini API ключ)"
-	api_key_edit.secret = true
-	api_key_edit.custom_minimum_size = Vector2(600, 40)  # Увеличиваем размер для мобильного
-	api_key_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
-	api_key_edit.text = gemini_api_key if gemini_api_key != null else ""  # Показываем текущий ключ
-	api_key_container.add_child(api_key_edit)
+	var provider_option = OptionButton.new()
+	provider_option.custom_minimum_size = Vector2(300, 40)  # Увеличиваем размер для мобильного
+	provider_option.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	
-	var save_api_button = Button.new()
-	save_api_button.text = "Сохранить ключ"
-	save_api_button.custom_minimum_size = Vector2(150, 40)  # Увеличиваем размер кнопки
-	save_api_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
-	save_api_button.pressed.connect(func():
-		gemini_api_key = api_key_edit.text
-		save_api_key()
-		print("API ключ сохранен!")
+	# Добавляем провайдеры
+	provider_option.add_item("Google Gemini")
+	provider_option.add_item("OpenRouter.ai")
+	
+	# Устанавливаем текущий провайдер
+	provider_option.selected = 0 if current_provider == "gemini" else 1
+	
+	provider_option.item_selected.connect(func(index):
+		var new_provider = "gemini" if index == 0 else "openrouter"
+		if new_provider != current_provider:
+			current_provider = new_provider
+			print("Переключен провайдер на: ", current_provider)
+			save_api_key()  # Сохраняем выбор провайдера
+			update_requests_counter()  # Обновляем счетчик для нового провайдера
+			update_api_key_interface()  # Обновляем интерфейс API ключей
 	)
-	api_key_container.add_child(save_api_button)
+	provider_container.add_child(provider_option)
+	
+	# ===== API КЛЮЧИ =====
+	# Контейнер для Gemini API ключа
+	var gemini_api_container = HBoxContainer.new()
+	gemini_api_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
+	gemini_api_container.visible = current_provider == "gemini"
+	ai_tab.add_child(gemini_api_container)
+	
+	var gemini_api_label = Label.new()
+	gemini_api_label.text = "API ключ Google Gemini:"
+	gemini_api_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
+	gemini_api_container.add_child(gemini_api_label)
+	
+	var gemini_api_edit = LineEdit.new()
+	gemini_api_edit.placeholder_text = "AIza... (введите ваш Google Gemini API ключ)"
+	gemini_api_edit.secret = true
+	gemini_api_edit.custom_minimum_size = Vector2(600, 40)  # Увеличиваем размер для мобильного
+	gemini_api_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
+	gemini_api_edit.text = gemini_api_key if gemini_api_key != null else ""  # Показываем текущий ключ
+	gemini_api_container.add_child(gemini_api_edit)
+	
+	var save_gemini_button = Button.new()
+	save_gemini_button.text = "Сохранить ключ"
+	save_gemini_button.custom_minimum_size = Vector2(150, 40)  # Увеличиваем размер кнопки
+	save_gemini_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
+	save_gemini_button.pressed.connect(func():
+		gemini_api_key = gemini_api_edit.text
+		save_api_key()
+		print("Gemini API ключ сохранен!")
+	)
+	gemini_api_container.add_child(save_gemini_button)
+	
+	# Контейнер для OpenRouter API ключа
+	var openrouter_api_container = HBoxContainer.new()
+	openrouter_api_container.custom_minimum_size = Vector2(1140, 50)  # Увеличиваем высоту
+	openrouter_api_container.visible = current_provider == "openrouter"
+	ai_tab.add_child(openrouter_api_container)
+	
+	var openrouter_api_label = Label.new()
+	openrouter_api_label.text = "API ключ OpenRouter:"
+	openrouter_api_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
+	openrouter_api_container.add_child(openrouter_api_label)
+	
+	var openrouter_api_edit = LineEdit.new()
+	openrouter_api_edit.placeholder_text = "sk-or-v1-... (введите ваш OpenRouter API ключ)"
+	openrouter_api_edit.secret = true
+	openrouter_api_edit.custom_minimum_size = Vector2(600, 40)  # Увеличиваем размер для мобильного
+	openrouter_api_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
+	openrouter_api_edit.text = openrouter_api_key if openrouter_api_key != null else ""  # Показываем текущий ключ
+	openrouter_api_container.add_child(openrouter_api_edit)
+	
+	var save_openrouter_button = Button.new()
+	save_openrouter_button.text = "Сохранить ключ"
+	save_openrouter_button.custom_minimum_size = Vector2(150, 40)  # Увеличиваем размер кнопки
+	save_openrouter_button.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
+	save_openrouter_button.pressed.connect(func():
+		openrouter_api_key = openrouter_api_edit.text
+		save_openrouter_api_key()
+		print("OpenRouter API ключ сохранен!")
+	)
+	openrouter_api_container.add_child(save_openrouter_button)
+	
+	# Сохраняем ссылки на контейнеры API для обновления видимости
+	ai_tab.set_meta("gemini_api_container", gemini_api_container)
+	ai_tab.set_meta("openrouter_api_container", openrouter_api_container)
+	ai_tab.set_meta("provider_option", provider_option)
 	
 	# Селектор модели (мобильная версия)
 	var model_container = HBoxContainer.new()
@@ -1351,7 +1531,7 @@ func show_smart_replace_dialog_v2():
 	ai_tab.add_child(model_container)
 	
 	var model_label = Label.new()
-	model_label.text = "Модель Gemini:"
+	model_label.text = "Модель:"
 	model_label.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	model_container.add_child(model_label)
 	
@@ -1359,18 +1539,25 @@ func show_smart_replace_dialog_v2():
 	model_option.custom_minimum_size = Vector2(400, 40)  # Увеличиваем размер для мобильного
 	model_option.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	
-	# Добавляем модели в селектор
-	for model_id in available_models.keys():
-		var model_info = available_models[model_id]
-		var display_text = model_info.get("name", model_id) + " - " + model_info.get("description", "")
-		model_option.add_item(display_text)
-		model_option.set_item_metadata(model_option.get_item_count() - 1, model_id)
+	# Функция для обновления списка моделей
+	var update_model_list = func():
+		model_option.clear()
+		var models_to_show = available_models if current_provider == "gemini" else openrouter_models
+		
+		for model_id in models_to_show.keys():
+			var model_data = models_to_show[model_id]
+			var display_text = model_data.get("name", model_id) + " - " + model_data.get("description", "")
+			model_option.add_item(display_text)
+			model_option.set_item_metadata(model_option.get_item_count() - 1, model_id)
+		
+		# Устанавливаем текущую модель
+		for i in range(model_option.get_item_count()):
+			if model_option.get_item_metadata(i) == current_model:
+				model_option.selected = i
+				break
 	
-	# Устанавливаем текущую модель
-	for i in range(model_option.get_item_count()):
-		if model_option.get_item_metadata(i) == current_model:
-			model_option.selected = i
-			break
+	# Инициализируем список моделей
+	update_model_list.call()
 	
 	model_option.item_selected.connect(func(index):
 		var selected_model = model_option.get_item_metadata(index)
@@ -1381,6 +1568,10 @@ func show_smart_replace_dialog_v2():
 			update_requests_counter()  # Обновляем счетчик для новой модели
 	)
 	model_container.add_child(model_option)
+	
+	# Сохраняем ссылки для обновления
+	ai_tab.set_meta("model_option", model_option)
+	ai_tab.set_meta("update_model_list", update_model_list)
 	
 	# Кнопки управления (мобильная версия)
 	var control_buttons = HBoxContainer.new()
@@ -2721,17 +2912,19 @@ func send_message_to_ai(message: String):
 	# Проверяем лимиты запросов
 	write_debug_log("Проверяем лимиты запросов", "INFO")
 	var current_count = check_and_update_daily_requests()
-	var model_limit = available_models[current_model].get("daily_limit", 50)
+	var model_limit = get_current_model_limit()
 	
 	if current_count >= model_limit:
 		write_debug_log("Достигнут дневной лимит запросов: " + str(current_count) + "/" + str(model_limit), "WARNING")
-		var model_name = available_models[current_model].get("name", current_model)
+		var model_info = get_current_model_info()
+		var model_name = model_info.get("name", current_model)
 		add_message_to_chat("Система", "🚫 Достигнут дневной лимит запросов для " + model_name + " (" + str(current_count) + "/" + str(model_limit) + "). Попробуйте другую модель или завтра.", "system")
 		return
 	
 	if current_count >= model_limit * 0.9:  # 90% от лимита
 		write_debug_log("Приближаемся к лимиту запросов: " + str(current_count) + "/" + str(model_limit), "WARNING")
-		var model_name = available_models[current_model].get("name", current_model)
+		var model_info = get_current_model_info()
+		var model_name = model_info.get("name", current_model)
 		add_message_to_chat("Система", "⚠️ Внимание: Приближаетесь к лимиту запросов для " + model_name + "! (" + str(current_count) + "/" + str(model_limit) + ")", "system")
 	
 	# Проверяем API ключ
@@ -2779,9 +2972,12 @@ func send_message_to_ai(message: String):
 	# Сбрасываем флаг первого сообщения после отправки
 	is_first_message_in_session = false
 	
-	# Отправляем запрос к Gemini
-	write_debug_log("Вызываем call_gemini_api", "INFO")
-	call_gemini_api(prompt)
+	# Отправляем запрос к выбранному провайдеру
+	write_debug_log("Вызываем API для провайдера: " + current_provider, "INFO")
+	if current_provider == "gemini":
+		call_gemini_api(prompt)
+	else:
+		call_openrouter_api(prompt)
 
 func add_message_to_chat(sender: String, message: String, type: String):
 	print("add_message_to_chat вызвана: ", sender, " - ", message)
@@ -3258,6 +3454,167 @@ func handle_gemini_response(result: int, response_code: int, headers: PackedStri
 		print("Пустой ответ от AI")
 		add_message_to_chat("Система", "Пустой ответ от AI", "system")
 
+# Функция для вызова OpenRouter API
+func call_openrouter_api(prompt: String):
+	write_debug_log("=== НАЧАЛО call_openrouter_api ===", "INFO")
+	write_debug_log("Длина промпта: " + str(prompt.length()), "INFO")
+	write_debug_log("is_requesting: " + str(is_requesting), "INFO")
+	write_debug_log("Текущее время: " + Time.get_time_string_from_system(), "INFO")
+	
+	print("=== НАЧАЛО call_openrouter_api ===")
+	print("Длина промпта: ", prompt.length())
+	print("is_requesting: ", is_requesting)
+	print("Текущее время: ", Time.get_time_string_from_system())
+	
+	# Увеличиваем счетчик запросов
+	write_debug_log("Увеличиваем счетчик запросов", "INFO")
+	increment_daily_requests()
+	
+	# Создаем HTTP запрос
+	write_debug_log("Создаем HTTP запрос", "INFO")
+	var http = HTTPRequest.new()
+	http.timeout = 30  # 30 секунд таймаут
+	
+	# Проверяем, что узел все еще существует перед добавлением
+	if not is_inside_tree():
+		write_debug_log("Узел не в дереве, отменяем запрос", "ERROR")
+		print("Узел не в дереве, отменяем запрос")
+		return
+	
+	write_debug_log("Добавляем HTTP запрос как дочерний узел", "INFO")
+	add_child(http)
+	
+	# Формируем JSON для запроса OpenRouter
+	var request_data = {
+		"model": current_model,
+		"messages": [
+			{
+				"role": "user",
+				"content": prompt
+			}
+		],
+		"max_tokens": get_current_model_info().get("max_tokens", 2000),
+		"temperature": 0.1
+	}
+	
+	var json_string = JSON.stringify(request_data)
+	
+	# Настраиваем заголовки для OpenRouter
+	var headers = [
+		"Content-Type: application/json",
+		"Authorization: Bearer " + openrouter_api_key,
+		"HTTP-Referer: https://godot-engine.org",
+		"X-Title: Smart Replace Plugin"
+	]
+	
+	# Отправляем запрос
+	write_debug_log("Отправляем запрос на OpenRouter API", "INFO")
+	write_debug_log("Длина JSON данных: " + str(json_string.length()), "INFO")
+	print("Отправляем запрос на OpenRouter API")
+	print("Длина JSON данных: ", json_string.length())
+	
+	var error = http.request(OPENROUTER_API_BASE_URL, headers, HTTPClient.METHOD_POST, json_string)
+	if error != OK:
+		write_debug_log("Ошибка при отправке HTTP запроса: " + str(error), "ERROR")
+		print("Ошибка при отправке HTTP запроса: ", error)
+		http.queue_free()
+		return
+	
+	# Подключаем сигнал завершения с защитой
+	if http and is_instance_valid(http):
+		http.request_completed.connect(func(result, response_code, headers, body):
+			handle_openrouter_response(result, response_code, headers, body)
+			if http and is_instance_valid(http):
+				http.queue_free()
+		)
+
+# Функция для обработки ответа OpenRouter
+func handle_openrouter_response(result: int, response_code: int, headers: PackedStringArray, body: PackedByteArray):
+	write_debug_log("=== НАЧАЛО handle_openrouter_response ===", "INFO")
+	write_debug_log("Код ответа: " + str(response_code), "INFO")
+	write_debug_log("is_requesting до сброса: " + str(is_requesting), "INFO")
+	write_debug_log("Текущее время: " + Time.get_time_string_from_system(), "INFO")
+	
+	print("=== НАЧАЛО handle_openrouter_response ===")
+	print("Код ответа: ", response_code)
+	print("is_requesting до сброса: ", is_requesting)
+	print("Текущее время: ", Time.get_time_string_from_system())
+	
+	# Включаем кнопку и поле ввода обратно
+	if current_dialog:
+		var vbox = current_dialog.get_child(0)
+		if vbox and vbox.get_child_count() > 0:
+			var tab_container = vbox.get_child(0)
+			if tab_container and tab_container.get_child_count() > 0:
+				var ai_tab = tab_container.get_child(0)
+				if ai_tab:
+					var send_button = ai_tab.get_meta("send_button")
+					if send_button:
+						send_button.disabled = false
+						send_button.text = "Отправить"
+					
+					var message_edit = ai_tab.get_meta("message_edit")
+					if message_edit:
+						message_edit.editable = true
+						message_edit.placeholder_text = "Введите ваше сообщение для AI..."
+	
+	# Флаг is_requesting будет сброшен в process_ai_response
+	
+	if result != HTTPRequest.RESULT_SUCCESS:
+		write_debug_log("Ошибка HTTP запроса: " + str(result), "ERROR")
+		print("Ошибка HTTP запроса: ", result)
+		write_debug_log("Сбрасываем is_requesting = false из-за ошибки HTTP", "INFO")
+		is_requesting = false
+		
+		# Безопасно добавляем сообщение об ошибке
+		if is_inside_tree():
+			add_message_to_chat("Система", "❌ Ошибка сети при обращении к OpenRouter API. Проверьте интернет-соединение.", "system")
+		return
+	
+	# Парсим JSON ответ
+	var json = JSON.new()
+	var parse_result = json.parse(body.get_string_from_utf8())
+	
+	if parse_result != OK:
+		write_debug_log("Ошибка парсинга JSON ответа", "ERROR")
+		print("Ошибка парсинга JSON ответа")
+		is_requesting = false
+		if is_inside_tree():
+			add_message_to_chat("Система", "❌ Ошибка при обработке ответа от OpenRouter API.", "system")
+		return
+	
+	var response_data = json.data
+	
+	# Проверяем наличие ошибки в ответе
+	if response_data.has("error"):
+		write_debug_log("OpenRouter API вернул ошибку: " + str(response_data.error), "ERROR")
+		print("OpenRouter API вернул ошибку: ", response_data.error)
+		is_requesting = false
+		if is_inside_tree():
+			add_message_to_chat("Система", "❌ Ошибка OpenRouter API: " + str(response_data.error.get("message", "Неизвестная ошибка")), "system")
+		return
+	
+	# Извлекаем ответ AI
+	var ai_response = ""
+	if response_data.has("choices") and response_data.choices.size() > 0:
+		var choice = response_data.choices[0]
+		if choice.has("message") and choice.message.has("content"):
+			ai_response = choice.message.content
+	
+	if ai_response.strip_edges() == "":
+		write_debug_log("Пустой ответ от OpenRouter API", "WARNING")
+		print("Пустой ответ от OpenRouter API")
+		is_requesting = false
+		if is_inside_tree():
+			add_message_to_chat("Система", "⚠️ Получен пустой ответ от OpenRouter API.", "system")
+		return
+	
+	write_debug_log("Получен ответ от OpenRouter API, длина: " + str(ai_response.length()), "INFO")
+	print("Получен ответ от OpenRouter API, длина: ", ai_response.length())
+	
+	# Обрабатываем ответ AI
+	process_ai_response(ai_response)
+
 func process_ai_response(ai_response: String):
 	print("=== НАЧАЛО process_ai_response ===")
 	print("is_requesting до сброса: ", is_requesting)
@@ -3271,8 +3628,12 @@ func process_ai_response(ai_response: String):
 	# Убираем INI команды из текстового ответа для пользователя
 	var text_response = remove_ini_commands_from_text(ai_response)
 	
-	# Добавляем ответ AI в чат
-	add_message_to_chat("Gemini", text_response, "ai")
+	# Получаем имя текущей модели для отображения в чате
+	var model_info = get_current_model_info()
+	var model_name = model_info.get("name", current_model)
+	
+	# Добавляем ответ AI в чат с именем модели
+	add_message_to_chat(model_name, text_response, "ai")
 	
 	# Если есть команды, показываем их для применения
 	if ini_commands != "":
@@ -3319,23 +3680,26 @@ func show_api_key_dialog():
 	add_message_to_chat("Система", "Для использования AI чата необходимо настроить API ключ Google Gemini. Введите ключ в поле выше и нажмите 'Сохранить ключ'.", "system")
 
 func save_api_key():
-	# Сохраняем API ключ и модель в настройках проекта
+	# Сохраняем API ключ, модель и провайдер в настройках проекта
 	var config = ConfigFile.new()
 	config.set_value("smart_replace", "gemini_api_key", gemini_api_key)
 	config.set_value("smart_replace", "current_model", current_model)
+	config.set_value("smart_replace", "current_provider", current_provider)
 	config.save("res://smart_replace_config.ini")
 
 func load_api_key():
-	# Загружаем API ключ и модель из настроек
+	# Загружаем API ключ, модель и провайдер из настроек
 	var config = ConfigFile.new()
 	var error = config.load("res://smart_replace_config.ini")
 	if error == OK:
 		gemini_api_key = config.get_value("smart_replace", "gemini_api_key", "")
-		current_model = config.get_value("smart_replace", "current_model", "gemini-1.5-flash")
+		current_model = config.get_value("smart_replace", "current_model", "openai/gpt-4o-mini")
+		current_provider = config.get_value("smart_replace", "current_provider", "openrouter")
 	else:
-		# Если файл не существует, оставляем пустую строку и модель по умолчанию
+		# Если файл не существует, оставляем пустые значения и настройки по умолчанию (только бесплатные модели)
 		gemini_api_key = ""
-		current_model = "gemini-1.5-flash"
+		current_model = "openai/gpt-4o-mini"  # Бесплатная модель OpenRouter
+		current_provider = "openrouter"
 
 # Функция для тестирования соединения
 func test_connection():
