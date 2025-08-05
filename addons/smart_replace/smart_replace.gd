@@ -715,27 +715,8 @@ func show_preview_dialog(preview_text: String, callback: Callable):
 	open_dialogs.append(dialog)
 	
 	# Добавляем обработчик горячих клавиш для диалога
-	dialog.gui_input.connect(func(event):
-		if event is InputEventKey and event.pressed:
-			# Ctrl+C - копировать выделенное
-			if event.keycode == KEY_C and event.ctrl_pressed:
-				var selected_text = ""
-				# Ищем RichTextLabel в диалоге
-				for child in dialog.get_children():
-					if child is RichTextLabel:
-						selected_text = child.get_selected_text()
-						break
-				if selected_text != "":
-					DisplayServer.clipboard_set(selected_text)
-					print("Выделенный текст скопирован в буфер обмена")
-			
-			# Ctrl+A - выделить все
-			elif event.keycode == KEY_A and event.ctrl_pressed:
-				for child in dialog.get_children():
-					if child is RichTextLabel:
-						child.select_all()
-						break
-	)
+	# Используем Input singleton для глобальных горячих клавиш
+	# Горячие клавиши будут работать через кнопки в интерфейсе
 	
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
@@ -2385,7 +2366,7 @@ func extract_new_commands(ai_response: String) -> String:
 	# Ищем новые команды в тексте
 	var commands = []
 	var regex = RegEx.new()
-	regex.compile("\\[\\+\\+\\+?\\d+@[^\\]]*\\]|\\[\\-\\-\\-?\\d+@[^\\]]*\\]")
+	regex.compile("\\[\\+\\+\\d+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+\\+?\\d+@[^\\]]*\\]|\\[\\-\\-\\+\\+\\d+@[^\\]]*\\]|\\[\\-\\+\\d+@[^\\]]*\\]|\\[\\-\\-\\-?\\d+@[^\\]]*\\]")
 	
 	var results = regex.search_all(ai_response)
 	for result in results:
@@ -2394,25 +2375,40 @@ func extract_new_commands(ai_response: String) -> String:
 	return "\n".join(commands)
 
 func parse_new_command(command: String) -> Dictionary:
-	# Парсим новую команду формата [++N@ код] или [--N@]
+	# Парсим новую команду формата [++N@ код], [++N:N-level@ код] или [--N@]
 	var result = {
 		"type": "",
 		"line": 0,
 		"code": "",
-		"deep": false
+		"deep": false,
+		"level": 0,
+		"structure": ""
 	}
 	
 	# Убираем внешние скобки
 	var clean_command = command.substr(1, command.length() - 2)
 	
 	# Определяем тип команды
-	if clean_command.begins_with("+++"):
+	if clean_command.begins_with("--++"):
+		result.type = "delete_and_insert"
+		result.deep = true
+		clean_command = clean_command.substr(4)
+	elif clean_command.begins_with("-+"):
+		result.type = "delete_and_insert_single"
+		result.deep = false
+		clean_command = clean_command.substr(2)
+	elif clean_command.begins_with("+++"):
 		result.type = "replace_deep"
 		result.deep = true
 		clean_command = clean_command.substr(3)
 	elif clean_command.begins_with("++"):
-		result.type = "insert"
-		clean_command = clean_command.substr(2)
+		# Проверяем, есть ли уровень вложения [++N:N-level@]
+		if clean_command.contains(":"):
+			result.type = "insert_with_level"
+			clean_command = clean_command.substr(2)
+		else:
+			result.type = "insert"
+			clean_command = clean_command.substr(2)
 	elif clean_command.begins_with("---"):
 		result.type = "delete_deep"
 		result.deep = true
@@ -2421,10 +2417,19 @@ func parse_new_command(command: String) -> Dictionary:
 		result.type = "delete"
 		clean_command = clean_command.substr(2)
 	
-	# Извлекаем номер строки и код
+	# Извлекаем номер строки, структуру и код
 	var parts = clean_command.split("@", true, 1)
 	if parts.size() >= 1:
-		result.line = int(parts[0])
+		var line_part = parts[0]
+		# Проверяем, есть ли структура [++N:structure@]
+		if line_part.contains(":"):
+			var line_structure_parts = line_part.split(":", true, 1)
+			if line_structure_parts.size() >= 1:
+				result.line = int(line_structure_parts[0])
+			if line_structure_parts.size() >= 2:
+				result.structure = line_structure_parts[1]
+		else:
+			result.line = int(line_part)
 	
 	if parts.size() >= 2:
 		result.code = parts[1].strip_edges()
@@ -2502,8 +2507,47 @@ func execute_single_new_command(parsed: Dictionary, lines: Array) -> Array:
 				# Вставляем код, сдвигая остальные строки
 				lines.insert(line_num, parsed.code)
 		
+		"insert_with_level":
+			# Добавляем код внутрь указанной структуры
+			var insert_position = find_structure_insert_position(lines, line_num, parsed.structure)
+			var indent = calculate_indent_for_structure(lines, insert_position, parsed.structure)
+			var indented_code = indent + parsed.code
+			
+			if insert_position >= lines.size():
+				# Если позиция не существует, добавляем в конец
+				lines.append(indented_code)
+			else:
+				# Вставляем код с отступом в найденную позицию
+				lines.insert(insert_position, indented_code)
+		
+		"delete_and_insert":
+			# Удаляем строку и весь вложенный блок, затем вставляем новый код
+			if line_num < lines.size():
+				var start_line = line_num
+				var end_line = find_block_end(lines, line_num)
+				
+				# Удаляем старый блок
+				for i in range(start_line, end_line + 1):
+					if start_line < lines.size():
+						lines.remove_at(start_line)
+				
+				# Вставляем новый код
+				var new_lines = parsed.code.split("\n")
+				for i in range(new_lines.size() - 1, -1, -1):
+					lines.insert(start_line, new_lines[i])
+		
+		"delete_and_insert_single":
+			# Удаляем только одну строку, затем вставляем новый код (без многострочности)
+			if line_num < lines.size():
+				# Удаляем строку N
+				lines.remove_at(line_num)
+				
+				# Вставляем новый код (игнорируем \n, вставляем как одну строку)
+				var single_line_code = parsed.code.replace("\\n", " ").replace("\n", " ")
+				lines.insert(line_num, single_line_code)
+		
 		"replace_deep":
-			# Заменяем строку и весь вложенный блок
+			# Заменяет строку и весь вложенный блок
 			if line_num < lines.size():
 				var start_line = line_num
 				var end_line = find_block_end(lines, line_num)
@@ -2566,6 +2610,53 @@ func get_line_indent(line: String) -> int:
 			indent += 4  # Табуляция = 4 пробела
 		else:
 			break
+	return indent
+
+func find_structure_insert_position(lines: Array, target_line: int, structure_name: String) -> int:
+	# Находим позицию для вставки кода внутрь указанной структуры
+	var structure_start = -1
+	
+	# Ищем ближайшую структуру выше target_line
+	for i in range(target_line - 1, -1, -1):
+		var line = lines[i].strip_edges()
+		if line.begins_with(structure_name + " "):
+			structure_start = i
+			break
+	
+	if structure_start == -1:
+		# Если структура не найдена, вставляем в target_line
+		return target_line
+	
+	# Находим конец структуры
+	var structure_end = find_block_end(lines, structure_start)
+	
+	# Вставляем перед последней строкой структуры (обычно это pass или return)
+	var insert_pos = structure_end
+	for i in range(structure_start + 1, structure_end + 1):
+		if i < lines.size():
+			var line = lines[i].strip_edges()
+			if line == "pass" or line.begins_with("return"):
+				insert_pos = i
+				break
+	
+	return insert_pos
+
+func calculate_indent_for_structure(lines: Array, insert_position: int, structure_name: String) -> String:
+	# Рассчитываем отступ для вставки в структуру
+	var base_indent = 0
+	
+	# Ищем начало структуры
+	for i in range(insert_position - 1, -1, -1):
+		var line = lines[i].strip_edges()
+		if line.begins_with(structure_name + " "):
+			base_indent = get_line_indent(lines[i]) + 4  # Внутри структуры
+			break
+	
+	# Создаем строку отступа
+	var indent = ""
+	for i in range(base_indent):
+		indent += " "
+	
 	return indent
 
 # Функция для обновления списка ошибок Godot

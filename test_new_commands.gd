@@ -9,9 +9,15 @@ func _ready():
 
 
 
-func attack():
-	print("Атака!")
-	return true
+
+func Move3():
+	var num =4
+	var dfefwef=78
+	if 2<3:
+		print(45)
+		var rger = 90
+		if 8>2:
+print(324)
 
 func die():
 	print("Игрок умер!")
