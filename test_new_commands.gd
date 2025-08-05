@@ -7,9 +7,7 @@ var damage = 10
 func _ready():
 	print("Игрок готов!")
 
-func move(delta):
-	if health > 0:
-		position.x += speed * delta
+
 
 func attack():
 	print("Атака!")

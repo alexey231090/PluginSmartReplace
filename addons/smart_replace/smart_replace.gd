@@ -714,6 +714,29 @@ func show_preview_dialog(preview_text: String, callback: Callable):
 	# Добавляем диалог в массив открытых диалогов
 	open_dialogs.append(dialog)
 	
+	# Добавляем обработчик горячих клавиш для диалога
+	dialog.gui_input.connect(func(event):
+		if event is InputEventKey and event.pressed:
+			# Ctrl+C - копировать выделенное
+			if event.keycode == KEY_C and event.ctrl_pressed:
+				var selected_text = ""
+				# Ищем RichTextLabel в диалоге
+				for child in dialog.get_children():
+					if child is RichTextLabel:
+						selected_text = child.get_selected_text()
+						break
+				if selected_text != "":
+					DisplayServer.clipboard_set(selected_text)
+					print("Выделенный текст скопирован в буфер обмена")
+			
+			# Ctrl+A - выделить все
+			elif event.keycode == KEY_A and event.ctrl_pressed:
+				for child in dialog.get_children():
+					if child is RichTextLabel:
+						child.select_all()
+						break
+	)
+	
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
 
@@ -911,10 +934,54 @@ func show_smart_replace_dialog_v2():
 	chat_history_edit.custom_minimum_size = Vector2(1140, 350)  # Увеличиваем размер
 	chat_history_edit.bbcode_enabled = true
 	chat_history_edit.scroll_following = true
+	chat_history_edit.selection_enabled = true  # Включаем выделение текста
+	chat_history_edit.context_menu_enabled = true  # Включаем контекстное меню
+	chat_history_edit.shortcut_keys_enabled = true  # Включаем горячие клавиши (Ctrl+C, Ctrl+A)
 	chat_area.add_child(chat_history_edit)
 	
 	# Загружаем историю чата в интерфейс
 	load_chat_to_ui(chat_history_edit)
+	
+	# Кнопки для работы с текстом чата
+	var chat_buttons_container = HBoxContainer.new()
+	chat_buttons_container.custom_minimum_size = Vector2(1140, 40)
+	chat_area.add_child(chat_buttons_container)
+	
+	var copy_selected_button = Button.new()
+	copy_selected_button.text = "Копировать выделенное"
+	copy_selected_button.custom_minimum_size = Vector2(200, 35)
+	copy_selected_button.add_theme_font_size_override("font_size", 12)
+	copy_selected_button.pressed.connect(func():
+		var selected_text = chat_history_edit.get_selected_text()
+		if selected_text != "":
+			DisplayServer.clipboard_set(selected_text)
+			print("Выделенный текст скопирован в буфер обмена")
+		else:
+			print("Нет выделенного текста")
+	)
+	chat_buttons_container.add_child(copy_selected_button)
+	
+	var copy_all_button = Button.new()
+	copy_all_button.text = "Копировать весь чат"
+	copy_all_button.custom_minimum_size = Vector2(200, 35)
+	copy_all_button.add_theme_font_size_override("font_size", 12)
+	copy_all_button.pressed.connect(func():
+		var all_text = chat_history_edit.get_text()
+		DisplayServer.clipboard_set(all_text)
+		print("Весь текст чата скопирован в буфер обмена")
+	)
+	chat_buttons_container.add_child(copy_all_button)
+	
+	var clear_chat_button = Button.new()
+	clear_chat_button.text = "Очистить чат"
+	clear_chat_button.custom_minimum_size = Vector2(150, 35)
+	clear_chat_button.add_theme_font_size_override("font_size", 12)
+	clear_chat_button.pressed.connect(func():
+		chat_history.clear()
+		chat_history_edit.clear()
+		print("Чат очищен")
+	)
+	chat_buttons_container.add_child(clear_chat_button)
 	
 	# Счетчик запросов уже добавлен выше в input_container
 	
@@ -1117,11 +1184,11 @@ func show_smart_replace_dialog_v2():
 	control_buttons.add_child(show_commands_button)
 	
 	# Кнопка очистки чата (мобильная версия)
-	var clear_chat_button = Button.new()
-	clear_chat_button.text = "Очистить чат"
-	clear_chat_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
-	clear_chat_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
-	clear_chat_button.pressed.connect(func():
+	var clear_chat_control_button = Button.new()
+	clear_chat_control_button.text = "Очистить чат"
+	clear_chat_control_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
+	clear_chat_control_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
+	clear_chat_control_button.pressed.connect(func():
 		chat_history.clear()
 		chat_history_edit.text = ""
 		save_chat_history()  # Сохраняем пустую историю
@@ -1132,7 +1199,7 @@ func show_smart_replace_dialog_v2():
 		extracted_commands_edit.text = ""
 		update_apply_button_color(apply_commands_button)
 	)
-	control_buttons.add_child(clear_chat_button)
+	control_buttons.add_child(clear_chat_control_button)
 	
 	# Кнопка просмотра лога (для диагностики)
 	var view_log_button = Button.new()
@@ -2049,31 +2116,85 @@ func handle_openrouter_response(result: int, response_code: int, headers: Packed
 		is_requesting = false
 		
 		# Безопасно добавляем сообщение об ошибке
+		var error_message = "❌ Ошибка сети при обращении к OpenRouter API.\n\n💡 Возможные причины:\n• Проблемы с интернет-соединением\n• Неправильный API ключ\n• Модель недоступна"
 		if is_inside_tree():
-			add_message_to_chat("Система", "❌ Ошибка сети при обращении к OpenRouter API. Проверьте интернет-соединение.", "system")
+			add_message_to_chat("Система", error_message, "system")
+		return
+	
+	# Проверяем код ответа HTTP
+	if response_code != 200:
+		write_debug_log("HTTP код ответа: " + str(response_code), "ERROR")
+		print("HTTP код ответа: ", response_code)
+		
+		var error_message = "❌ Ошибка OpenRouter API (HTTP " + str(response_code) + ")"
+		
+		match response_code:
+			401:
+				error_message += "\n\n💡 Неверный API ключ. Проверьте правильность ключа."
+			402:
+				error_message += "\n\n💡 Недостаточно средств на балансе OpenRouter."
+			404:
+				error_message += "\n\n💡 Модель не найдена. Попробуйте другую модель."
+			429:
+				error_message += "\n\n💡 Превышен лимит запросов. Подождите немного."
+			500, 502, 503:
+				error_message += "\n\n💡 Проблемы на стороне OpenRouter. Попробуйте позже."
+			_:
+				error_message += "\n\n💡 Неизвестная ошибка сервера."
+		
+		is_requesting = false
+		if is_inside_tree():
+			add_message_to_chat("Система", error_message, "system")
 		return
 	
 	# Парсим JSON ответ
+	var response_text = body.get_string_from_utf8()
+	write_debug_log("Тело ответа OpenRouter: " + response_text, "INFO")
+	
 	var json = JSON.new()
-	var parse_result = json.parse(body.get_string_from_utf8())
+	var parse_result = json.parse(response_text)
 	
 	if parse_result != OK:
-		write_debug_log("Ошибка парсинга JSON ответа", "ERROR")
-		print("Ошибка парсинга JSON ответа")
+		write_debug_log("Ошибка парсинга JSON ответа: " + str(parse_result), "ERROR")
+		print("Ошибка парсинга JSON ответа: ", parse_result)
+		write_debug_log("Сырой ответ: " + response_text, "ERROR")
 		is_requesting = false
 		if is_inside_tree():
-			add_message_to_chat("Система", "❌ Ошибка при обработке ответа от OpenRouter API.", "system")
+			add_message_to_chat("Система", "❌ Ошибка при обработке ответа от OpenRouter API.\n\n💡 Возможные причины:\n• Неправильный формат ответа\n• Проблемы с кодировкой\n• Сервер вернул не-JSON ответ", "system")
 		return
 	
 	var response_data = json.data
 	
 	# Проверяем наличие ошибки в ответе
 	if response_data.has("error"):
-		write_debug_log("OpenRouter API вернул ошибку: " + str(response_data.error), "ERROR")
-		print("OpenRouter API вернул ошибку: ", response_data.error)
+		var error_info = response_data.error
+		var error_message = "Неизвестная ошибка"
+		var error_type = "error"
+		
+		if error_info.has("message"):
+			error_message = str(error_info.message)
+		elif error_info.has("type"):
+			error_type = str(error_info.type)
+		
+		write_debug_log("OpenRouter API вернул ошибку: " + str(error_info), "ERROR")
+		print("OpenRouter API вернул ошибку: ", error_info)
+		
+		# Формируем понятное сообщение об ошибке
+		var user_message = "❌ Ошибка OpenRouter API: " + error_message
+		
+			# Добавляем рекомендации в зависимости от типа ошибки
+		if error_message.contains("quota") or error_message.contains("limit"):
+			user_message += "\n\n💡 Рекомендации:\n• Проверьте баланс на OpenRouter\n• Попробуйте другую модель"
+		elif error_message.contains("model") or error_message.contains("provider"):
+			user_message += "\n\n💡 Рекомендации:\n• Модель может быть временно недоступна\n• Попробуйте другую модель (GPT-4o Mini, DeepSeek R1, Llama 3.1 8B)"
+		elif error_message.contains("key") or error_message.contains("auth"):
+			user_message += "\n\n💡 Рекомендации:\n• Проверьте правильность API ключа\n• Убедитесь, что ключ активен"
+		else:
+			user_message += "\n\n💡 Рекомендации:\n• Попробуйте другую модель\n• Проверьте API ключ\n• Убедитесь в наличии средств на балансе"
+		
 		is_requesting = false
 		if is_inside_tree():
-			add_message_to_chat("Система", "❌ Ошибка OpenRouter API: " + str(response_data.error.get("message", "Неизвестная ошибка")), "system")
+			add_message_to_chat("Система", user_message, "system")
 		return
 	
 	# Извлекаем ответ AI
@@ -2568,7 +2689,7 @@ func show_add_error_dialog(errors_list: ItemList):
 	label.text = "Введите текст ошибки из консоли Godot:"
 	vbox.add_child(label)
 	
-	# Поле для ввода ошибки (объявляем ПЕРЕД кнопками)
+	# Поле для ввода ошибки
 	var error_edit = TextEdit.new()
 	error_edit.custom_minimum_size = Vector2(580, 250)
 	error_edit.placeholder_text = "Например:\nERROR: res://test.gd:10 - Parse Error: Invalid syntax\nWARNING: res://test.gd:15 - Unused variable 'x'\nWARNING: editor/editor_file_system.cpp:1358 - UID duplicate detected\n\nСоветы:\n- Начинайте с ERROR: для красных ошибок\n- Начинайте с WARNING: для желтых предупреждений\n- Начинайте с INFO: для синей информации\n- Системные сообщения Godot тоже можно добавлять"
@@ -2601,7 +2722,6 @@ func show_add_error_dialog(errors_list: ItemList):
 		error_edit.text = "INFO: --- GDScript language server started on port 6005 ---"
 	)
 	quick_buttons.add_child(language_server_button)
-	vbox.add_child(error_edit)
 	
 	# Кнопки
 	var buttons = HBoxContainer.new()
