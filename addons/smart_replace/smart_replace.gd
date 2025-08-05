@@ -574,455 +574,113 @@ func _on_smart_replace_pressed():
 
 func execute_ini_command(ini_text: String):
 	if ini_text.strip_edges() == "":
-		print("INI команда не может быть пустой!")
+		print("Команды не могут быть пустыми!")
 		return
 	
-	# Парсим INI текст
-	var commands = parse_ini_text(ini_text)
-	if commands.is_empty():
-		print("Не удалось распарсить INI команды!")
-		return
-	
-	# Выполняем команды
-	var all_success = true
-	for cmd in commands:
-		var ok = execute_ini_single(cmd)
-		if not ok:
-			all_success = false
-	
-	if all_success:
-		print("Все INI команды выполнены успешно!")
-	else:
-		print("Некоторые INI команды завершились с ошибкой!")
+	# Выполняем новые команды
+	print("Выполняем команды...")
+	execute_new_commands_directly(ini_text)
 
-func parse_ini_text(ini_text: String) -> Array:
-	var commands = []
-	var lines = ini_text.split("\n")
-	var current_command = {}
-	var current_section = ""
-	var in_command_block = false
-	var in_code_block = false
-	var current_code_lines = []
+func execute_new_commands_directly(commands_text: String):
+	print("=== ОТЛАДКА: Начинаем выполнение команд ===")
+	print("Команды: ", commands_text)
 	
-	for i in range(lines.size()):
-		var line = lines[i]
-		var stripped_line = line.strip_edges()
-		
-		# Проверяем маркеры начала и конца команды
-		if stripped_line == "=[command]=":
-			# Начало блока команд
-			in_command_block = true
-			in_code_block = false
-			current_code_lines.clear()
-			continue
-		elif stripped_line == "=[end]=":
-			# Конец блока команд
-			if in_code_block and current_code_lines.size() > 0:
-				# Нормализуем отступы перед сохранением кода
-				var normalized_code = normalize_indentation(current_code_lines)
-				current_command["code"] = "\n".join(normalized_code)
-			if not current_command.is_empty():
-				commands.append(current_command)
-			in_command_block = false
-			in_code_block = false
-			current_command = {}
-			current_code_lines.clear()
-			continue
-		
-		# Если не в блоке команд, пропускаем
-		if not in_command_block:
-			continue
-		
-		if stripped_line.is_empty() or stripped_line.begins_with("#"):
-			continue
-		
-		# Новая секция [action]
-		if stripped_line.begins_with("[") and stripped_line.ends_with("]"):
-			# Сохраняем предыдущую команду
-			if in_code_block and current_code_lines.size() > 0:
-				# Нормализуем отступы перед сохранением кода
-				var normalized_code = normalize_indentation(current_code_lines)
-				current_command["code"] = "\n".join(normalized_code)
-			if not current_command.is_empty():
-				commands.append(current_command)
-			
-			# Начинаем новую команду
-			current_section = stripped_line.substr(1, stripped_line.length() - 2)
-			current_command = {"action": current_section}
-			in_code_block = false
-			current_code_lines.clear()
-			continue
-		
-		# Проверяем маркеры кода
-		if stripped_line == "<cod>":
-			in_code_block = true
-			continue
-		elif stripped_line == "<end_cod>":
-			in_code_block = false
-			if current_code_lines.size() > 0:
-				# Нормализуем отступы перед сохранением кода
-				var normalized_code = normalize_indentation(current_code_lines)
-				current_command["code"] = "\n".join(normalized_code)
-			current_code_lines.clear()
-			continue
-		
-		# Если в блоке кода, добавляем строку
-		if in_code_block:
-			current_code_lines.append(line)
-			continue
-		
-		# Параметр = значение (только если не в блоке кода)
-		if "=" in stripped_line:
-			var parts = stripped_line.split("=", true, 1)
-			var key = parts[0].strip_edges()
-			var value = parts[1].strip_edges()
-			
-			# Обрабатываем экранированные символы
-			value = value.replace("\\n", "\n")
-			value = value.replace("\\t", "\t")
-			value = value.replace("\\\"", "\"")
-			
-			current_command[key] = value
-	
-	# Добавляем последнюю команду
-	if in_code_block and current_code_lines.size() > 0:
-		# Нормализуем отступы перед сохранением кода
-		var normalized_code = normalize_indentation(current_code_lines)
-		current_command["code"] = "\n".join(normalized_code)
-	if not current_command.is_empty():
-		commands.append(current_command)
-	
-	return commands
-
-func execute_ini_single(data: Dictionary) -> bool:
-	if not data.has("action"):
-		print("INI команда должна содержать секцию [action]!")
-		return false
-	var action = data.action
-	var success = false
-	match action:
-		"add_function":
-			success = handle_add_function(data)
-		"replace_function":
-			success = handle_replace_function(data)
-		"delete_function":
-			success = handle_delete_function(data)
-		"add_code":
-			success = handle_add_code(data)
-		"delete_code":
-			success = handle_delete_code(data)
-		_:
-			print("Неизвестное действие: ", action)
-			return false
-	if success:
-		print("INI команда выполнена успешно!")
-	else:
-		print("Ошибка при выполнении INI команды!")
-	return success
-
-
-
-func handle_add_function(data: Dictionary) -> bool:
-	if not data.has("name") or not data.has("code"):
-		print("Для добавления функции нужны поля 'name' и 'code'!")
-		return false
-	
-	var name = data.name
-	var args = data.get("parameters", "")
-	var code = data.code
-	var comment = data.get("comment", "")
-	
-	add_new_function_with_comment(name, args, code, comment)
-	return true
-
-func handle_replace_function(data: Dictionary) -> bool:
-	var function_data = {}
-	if data.has("signature"):
-		function_data = find_function_by_signature(data.signature)
-	elif data.has("name"):
-		function_data = find_function_by_name(data.name)
-	else:
-		print("Для замены функции нужно поле 'signature' или 'name'!")
-		return false
-	if function_data.is_empty():
-		print("Функция не найдена!")
-		return false
-	if not data.has("code"):
-		print("Для замены функции нужно поле 'code'!")
-		return false
-	var code = data.code
-	var comment = data.get("comment", "")
-	var new_signature = data.get("new_signature", "")
-	if new_signature.strip_edges() != "":
-		smart_replace_function_with_new_signature(function_data, code, comment, new_signature)
-	else:
-		smart_replace_function_with_comment(function_data, code, comment)
-	return true
-
-func handle_delete_function(data: Dictionary) -> bool:
-	var function_data = {}
-	if data.has("signature"):
-		function_data = find_function_by_signature(data.signature)
-	elif data.has("name"):
-		function_data = find_function_by_name(data.name)
-	else:
-		print("Для удаления функции нужно поле 'signature' или 'name'!")
-		return false
-	if function_data.is_empty():
-		print("Функция не найдена!")
-		return false
-	delete_function(function_data)
-	return true
-
-func handle_add_code(data: Dictionary) -> bool:
-	if not data.has("code"):
-		print("Для добавления кода нужно поле 'code'!")
-		return false
-	
-	var code = data.code
-	var position = data.get("position", 0)  # По умолчанию в конец
-	var line_number = data.get("line_number", 1)
-	
-	# Поддержка текстовых значений позиции
-	if data.has("position_type"):
-		var position_type = data.position_type
-		match position_type:
-			"end":
-				position = 0
-			"start":
-				position = 1
-			"after_extends":
-				position = 2
-			"before_extends":
-				position = 3
-			"specific_line":
-				position = 4
-				if data.has("line_number"):
-					line_number = data.line_number
-	
-	add_code_to_file(code, position, line_number)
-	return true
-
-func handle_delete_code(data: Dictionary) -> bool:
-	if not data.has("lines"):
-		print("Для удаления кода нужно поле 'lines' с номерами строк!")
-		return false
-	
-	var lines_param = data.lines
-	delete_lines_from_file(lines_param)
-	return true
-
-func find_function_by_signature(signature: String) -> Dictionary:
+	# Получаем текущий открытый файл
 	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var functions = find_functions_in_file(file_path)
-			
-			for func_data in functions:
-				if func_data.signature.strip_edges() == signature.strip_edges():
-					return func_data
-	
-	# Возвращаем пустой Dictionary вместо null
-	return {}
-
-# Новый поиск функции по имени
-func find_function_by_name(name: String) -> Dictionary:
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var functions = find_functions_in_file(file_path)
-			for func_data in functions:
-				if func_data.signature.begins_with("func " + name + "("):
-					return func_data
-	return {}
-
-func show_ini_preview(ini_text: String):
-	if ini_text.strip_edges() == "":
-		print("INI команда не может быть пустой!")
+	if not editor_interface:
+		print("ОШИБКА: Не удалось получить интерфейс редактора!")
 		return
 	
-	# Парсим INI текст
-	var commands = parse_ini_text(ini_text)
-	if commands.is_empty():
-		print("Не удалось распарсить INI команды!")
+	var script_editor = editor_interface.get_script_editor()
+	if not script_editor:
+		print("ОШИБКА: Не удалось получить редактор скриптов!")
 		return
 	
-	var preview_text = ""
-	for idx in range(commands.size()):
-		var cmd = commands[idx]
-		if not cmd.has("action"):
-			preview_text += "❌ Команда #" + str(idx+1) + ": нет секции [action]\n"
-			continue
-		preview_text += "--- Команда #" + str(idx+1) + " ---\n"
-		preview_text += generate_preview_for_single(cmd) + "\n"
+	var current_script = script_editor.get_current_script()
+	if not current_script:
+		print("ОШИБКА: Нет открытого скрипта!")
+		return
 	
-	show_preview_dialog(preview_text, ini_text)
-
-func generate_add_function_preview(data: Dictionary) -> String:
-	if not data.has("name") or not data.has("code"):
-		return "❌ Ошибка: Для добавления функции нужны поля 'name' и 'code'!"
+	print("Файл: ", current_script.resource_path)
 	
-	var name = data.name
-	var args = data.get("parameters", "")
-	var code = data.code
-	var comment = data.get("comment", "")
+	# Получаем текущий код
+	var current_code = current_script.source_code
+	print("Текущий код (длина): ", current_code.length())
 	
-	var signature = "func " + name + "(" + args + "):" if args != "" else "func " + name + "():"
+	# Выполняем новые команды
+	var new_code = execute_new_commands(commands_text, current_code)
+	print("Новый код (длина): ", new_code.length())
 	
-	var preview = "➕ ДОБАВИТЬ ФУНКЦИЮ:\n"
-	preview += "📝 Сигнатура: " + signature + "\n"
-	
-	if comment.strip_edges() != "":
-		preview += "💬 Комментарий: " + comment + "\n"
-	
-	preview += "📄 Код:\n"
-	
-	var code_lines = code.split("\n")
-	for line in code_lines:
-		if line.strip_edges() != "":
-			preview += "   " + line + "\n"
+	# Применяем изменения
+	if new_code != current_code:
+		print("Код изменился, применяем...")
+		# Применяем изменения напрямую
+		current_script.source_code = new_code
+		
+		# Принудительно обновляем редактор
+		# Сохраняем файл на диск, чтобы Godot обновил его
+		print("🔄 Сохраняем файл на диск...")
+		var file = FileAccess.open(current_script.resource_path, FileAccess.WRITE)
+		if file:
+			file.store_string(new_code)
+			file.close()
+			print("💾 Файл сохранен на диск")
 		else:
-			preview += "\n"
-	
-	preview += "📍 Место: в конец файла"
-	return preview
-
-func generate_replace_function_preview(data: Dictionary) -> String:
-	var signature = ""
-	var function_data = {}
-	if data.has("signature"):
-		signature = data.signature
-		function_data = find_function_by_signature(signature)
-	elif data.has("name"):
-		function_data = find_function_by_name(data.name)
-		if not function_data.is_empty():
-			signature = function_data.signature
+			print("❌ Ошибка сохранения файла")
+		
+		print("✅ Новые команды применены успешно!")
+		print("📝 Файл обновлен в редакторе")
+		print("💡 Если изменения не видны, попробуйте переключиться на другую вкладку и обратно")
 	else:
-		return "❌ Ошибка: Для замены функции нужно поле 'signature' или 'name'!"
-	if function_data.is_empty():
-		return "❌ Функция с именем/сигнатурой '" + (data.get("name", signature)) + "' не найдена!"
-	var code = data.code
-	var comment = data.get("comment", "")
-	var new_signature = data.get("new_signature", "")
-	var preview = "🔄 ЗАМЕНИТЬ ФУНКЦИЮ:\n"
-	preview += "📝 Текущая сигнатура: " + signature + "\n"
-	if new_signature.strip_edges() != "":
-		preview += "➡️ Новая сигнатура: " + new_signature + "\n"
-	preview += "📍 Строка: " + str(function_data.line) + "\n"
-	if comment.strip_edges() != "":
-		preview += "💬 Новый комментарий: " + comment + "\n"
-	preview += "📄 Новый код:\n"
-	var code_lines = code.split("\n")
-	for line in code_lines:
-		if line.strip_edges() != "":
-			preview += "   " + line + "\n"
-		else:
-			preview += "\n"
-	return preview
+		print("❌ Код не изменился после выполнения команд")
 
-func generate_delete_function_preview(data: Dictionary) -> String:
-	var signature = ""
-	var function_data = {}
-	if data.has("signature"):
-		signature = data.signature
-		function_data = find_function_by_signature(signature)
-	elif data.has("name"):
-		function_data = find_function_by_name(data.name)
-		if not function_data.is_empty():
-			signature = function_data.signature
+func generate_preview_for_new_commands(old_code: String, new_code: String) -> String:
+	var preview = "=== ПРЕДВАРИТЕЛЬНЫЙ ПРОСМОТР КОМАНД ===\n\n"
+	
+	# Парсим команды из текста (предполагаем, что команды переданы в old_code как исходные команды)
+	var commands = old_code.split("\n")
+	var valid_commands = []
+	
+	for command in commands:
+		command = command.strip_edges()
+		if command != "" and (command.begins_with("[++") or command.begins_with("[--")):
+			valid_commands.append(command)
+	
+	if valid_commands.size() == 0:
+		preview += "Команды не найдены.\n"
 	else:
-		return "❌ Ошибка: Для удаления функции нужно поле 'signature' или 'name'!"
-	
-	if function_data.is_empty():
-		return "❌ Функция с именем/сигнатурой '" + (data.get("name", signature)) + "' не найдена!"
-	
-	var preview = "🗑️ УДАЛИТЬ ФУНКЦИЮ:\n"
-	preview += "📝 Сигнатура: " + signature + "\n"
-	preview += "📍 Строка: " + str(function_data.line) + "\n"
-	preview += "⚠️ Внимание: Функция и комментарий над ней будут удалены!"
-	return preview
-
-func generate_add_code_preview(data: Dictionary) -> String:
-	if not data.has("code"):
-		return "❌ Ошибка: Для добавления кода нужно поле 'code'!"
-	
-	var code = data.code
-	var position = data.get("position", 0)
-	var line_number = data.get("line_number", 1)
-	
-	# Поддержка текстовых значений позиции
-	if data.has("position_type"):
-		var position_type = data.position_type
-		match position_type:
-			"end":
-				position = 0
-			"start":
-				position = 1
-			"after_extends":
-				position = 2
-			"before_extends":
-				position = 3
-			"specific_line":
-				position = 4
-				if data.has("line_number"):
-					line_number = data.line_number
-	
-	var position_names = ["в конец файла", "в начало файла", "после extends", "перед extends", "на строку " + str(line_number)]
-	
-	var preview = "➕ ДОБАВИТЬ КОД:\n"
-	preview += "📍 Место: " + position_names[position] + "\n"
-	preview += "📄 Код:\n"
-	
-	var code_lines = code.split("\n")
-	for line in code_lines:
-		if line.strip_edges() != "":
-			preview += "   " + line + "\n"
-		else:
-			preview += "\n"
+		preview += "Найдено команд: %d\n\n" % valid_commands.size()
+		
+		for command in valid_commands:
+			var parsed = parse_new_command(command)
+			if parsed.has("type") and parsed.has("line"):
+				preview += "Команда: %s\n" % command
+				preview += "  Действие: "
+				
+				match parsed.type:
+					"insert":
+						preview += "Добавить код в строку %d\n" % parsed.line
+						preview += "  Код: %s\n" % parsed.code
+					"replace_deep":
+						preview += "Заменить блок в строке %d\n" % parsed.line
+						preview += "  Новый код: %s\n" % parsed.code
+					"delete":
+						preview += "Удалить строку %d\n" % parsed.line
+					"delete_deep":
+						preview += "Удалить блок в строке %d\n" % parsed.line
+				
+				preview += "\n"
 	
 	return preview
 
-func generate_delete_code_preview(data: Dictionary) -> String:
-	if not data.has("lines"):
-		return "❌ Ошибка: Для удаления кода нужно поле 'lines' с номерами строк!"
-	
-	var lines_param = data.lines
-	
-	var preview = "🗑️ УДАЛИТЬ СТРОКИ:\n"
-	preview += "📄 Строки для удаления: " + lines_param + "\n"
-	
-	# Парсим и показываем какие строки будут удалены
-	var parts = lines_param.split(",")
-	for part in parts:
-		part = part.strip_edges()
-		if "-" in part:
-			# Диапазон строк
-			var range_parts = part.split("-")
-			if range_parts.size() == 2:
-				var start_line = range_parts[0].strip_edges()
-				var end_line = range_parts[1].strip_edges()
-				preview += "   Строки " + start_line + " - " + end_line + "\n"
-		else:
-			# Отдельная строка
-			preview += "   Строка " + part + "\n"
-	
-	preview += "⚠️ Внимание: Указанные строки будут удалены!"
-	return preview
-
-func show_preview_dialog(preview_text: String, ini_text: String):
+func show_preview_dialog(preview_text: String, callback: Callable):
 	# Закрываем все существующие диалоги
 	close_all_dialogs()
 	
 	var dialog = AcceptDialog.new()
 	dialog.title = "Предварительный просмотр изменений"
 	dialog.size = Vector2(800, 700)
+	dialog.exclusive = false
 	
 	var vbox = VBoxContainer.new()
 	dialog.add_child(vbox)
@@ -1037,48 +695,67 @@ func show_preview_dialog(preview_text: String, ini_text: String):
 	preview_edit.custom_minimum_size = Vector2(780, 400)
 	vbox.add_child(preview_edit)
 	
-	# Проверяем отступы в коде
-	var indent_issues = check_indentation_issues(ini_text)
-	var indent_warning = Label.new()
-	if indent_issues.length() > 0:
-		indent_warning.text = "⚠️ Обнаружены проблемы с отступами в коде!"
-		indent_warning.add_theme_color_override("font_color", Color.YELLOW)
-		vbox.add_child(indent_warning)
-		
-		var indent_details = TextEdit.new()
-		indent_details.text = indent_issues
-		indent_details.editable = false
-		indent_details.custom_minimum_size = Vector2(780, 100)
-		vbox.add_child(indent_details)
-	
 	var buttons = HBoxContainer.new()
 	vbox.add_child(buttons)
 	
 	var apply_button = Button.new()
 	apply_button.text = "Применить изменения"
 	apply_button.pressed.connect(func():
-		execute_ini_command(ini_text)
+		callback.call()
 		dialog.hide()
 	)
 	buttons.add_child(apply_button)
-	
-	if indent_issues.length() > 0:
-		var fix_indent_button = Button.new()
-		fix_indent_button.text = "Исправить отступы"
-		fix_indent_button.pressed.connect(func():
-			var fixed_ini = fix_indentation_in_ini(ini_text)
-			show_preview_dialog(generate_preview_for_ini(fixed_ini), fixed_ini)
-			dialog.hide()
-		)
-		buttons.add_child(fix_indent_button)
 	
 	var cancel_button = Button.new()
 	cancel_button.text = "Отмена"
 	cancel_button.pressed.connect(func(): dialog.hide())
 	buttons.add_child(cancel_button)
 	
+	# Добавляем диалог в массив открытых диалогов
+	open_dialogs.append(dialog)
+	
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
+
+# Старые функции INI парсера удалены - теперь используется только новый парсер команд
+
+
+
+# Старые функции обработки INI команд удалены - теперь используется только новый парсер
+
+# Функция find_function_by_signature удалена - больше не нужна
+
+# Функция find_function_by_name удалена - больше не нужна
+
+func get_current_file_code() -> String:
+	var editor_interface = get_editor_interface()
+	if not editor_interface:
+		return ""
+	
+	var script_editor = editor_interface.get_script_editor()
+	if not script_editor:
+		return ""
+	
+	var current_script = script_editor.get_current_script()
+	if not current_script:
+		return ""
+	
+	return current_script.source_code
+
+func show_ini_preview(ini_text: String):
+	if ini_text.strip_edges() == "":
+		print("Команды не могут быть пустыми!")
+		return
+	
+	# Показываем предварительный просмотр команд
+	var preview = generate_preview_for_new_commands(ini_text, "")
+	show_preview_dialog(preview, func():
+		execute_new_commands_directly(ini_text)
+	)
+
+# Старые функции предварительного просмотра удалены - теперь используется новый парсер
+
+# Дублирующаяся функция show_preview_dialog удалена - используется версия с callback
 
 func close_all_dialogs():
 	write_debug_log("Начинаем закрытие диалогов плагина", "INFO")
@@ -1117,189 +794,7 @@ func add_system_message(message: String, type: String = "INFO"):
 func get_system_messages() -> Array:
 	return system_messages.duplicate()
 
-func check_indentation_issues(ini_text: String) -> String:
-	var issues = []
-	var lines = ini_text.split("\n")
-	var in_code_block = false
-	var code_lines = []
-	var code_start_line = 0
-	
-	for i in range(lines.size()):
-		var line = lines[i]
-		var stripped_line = line.strip_edges()
-		
-		if stripped_line == "<cod>":
-			in_code_block = true
-			code_lines.clear()
-			code_start_line = i + 1
-			continue
-		elif stripped_line == "<end_cod>":
-			in_code_block = false
-			# Проверяем код на проблемы с отступами
-			var code_issues = analyze_code_indentation(code_lines, code_start_line)
-			if code_issues.size() > 0:
-				issues.append_array(code_issues)
-			continue
-		
-		if in_code_block:
-			code_lines.append(line)
-	
-	if issues.size() == 0:
-		return ""
-	
-	return "\n".join(issues)
-
-func analyze_code_indentation(code_lines: Array, start_line: int) -> Array:
-	var issues = []
-	var expected_indent = 0
-	
-	for i in range(code_lines.size()):
-		var line = code_lines[i]
-		var stripped_line = line.strip_edges()
-		
-		if stripped_line.is_empty():
-			continue
-		
-		# Проверяем, начинается ли строка с правильного отступа
-		var actual_indent = get_line_indent_level(line)
-		
-		# Если строка должна быть вложенной (после двоеточия)
-		if i > 0 and code_lines[i-1].strip_edges().ends_with(":"):
-			expected_indent += 1
-		
-		# Если строка не имеет отступа, но должна
-		if actual_indent == 0 and expected_indent > 0:
-			issues.append("Строка " + str(start_line + i + 1) + ": ожидается отступ " + str(expected_indent * 4) + " пробелов")
-		
-		# Если строка имеет отступ, но не должна
-		if actual_indent > 0 and expected_indent == 0:
-			issues.append("Строка " + str(start_line + i + 1) + ": лишний отступ")
-		
-		# Сбрасываем ожидаемый отступ для новых блоков
-		if stripped_line.begins_with("if ") or stripped_line.begins_with("for ") or stripped_line.begins_with("while ") or stripped_line.begins_with("def ") or stripped_line.begins_with("func "):
-			expected_indent = 0
-	
-	return issues
-
-func get_line_indent_level(line: String) -> int:
-	var indent = 0
-	for i in range(line.length()):
-		if line[i] == " ":
-			indent += 1
-		elif line[i] == "\t":
-			indent += 4
-		else:
-			break
-	return indent / 4
-
-func fix_indentation_in_ini(ini_text: String) -> String:
-	var lines = ini_text.split("\n")
-	var result_lines = []
-	var in_code_block = false
-	var code_lines = []
-	var code_start_index = 0
-	
-	for i in range(lines.size()):
-		var line = lines[i]
-		var stripped_line = line.strip_edges()
-		
-		if stripped_line == "<cod>":
-			in_code_block = true
-			code_lines.clear()
-			code_start_index = result_lines.size()
-			result_lines.append(line)
-			continue
-		elif stripped_line == "<end_cod>":
-			in_code_block = false
-			# Нормализуем отступы (заменяем табуляции на пробелы)
-			var normalized_code = normalize_indentation(code_lines)
-			# Исправляем отступы в коде
-			var fixed_code = fix_code_indentation(normalized_code)
-			result_lines.append_array(fixed_code)
-			result_lines.append(line)
-			continue
-		
-		if in_code_block:
-			code_lines.append(line)
-		else:
-			result_lines.append(line)
-	
-	return "\n".join(result_lines)
-
-func normalize_indentation(code_lines: Array) -> Array:
-	var result = []
-	for line in code_lines:
-		var normalized_line = ""
-		var in_indent = true
-		var indent_count = 0
-		
-		for i in range(line.length()):
-			var char = line[i]
-			if in_indent:
-				if char == " ":
-					indent_count += 1
-				elif char == "\t":
-					indent_count += 4
-				else:
-					in_indent = false
-					# Добавляем нормализованный отступ
-					for j in range(indent_count):
-						normalized_line += " "
-					normalized_line += char
-			else:
-				normalized_line += char
-		
-		# Если строка состояла только из отступов
-		if in_indent:
-			for j in range(indent_count):
-				normalized_line += " "
-		
-		result.append(normalized_line)
-	
-	return result
-
-func fix_code_indentation(code_lines: Array) -> Array:
-	var result = []
-	var indent_level = 0
-	
-	for line in code_lines:
-		var stripped_line = line.strip_edges()
-		
-		if stripped_line.is_empty():
-			result.append("")
-			continue
-		
-		# Уменьшаем отступ для строк, которые не должны быть вложенными
-		if stripped_line.begins_with("else:") or stripped_line.begins_with("elif "):
-			indent_level = max(0, indent_level - 1)
-		
-		# Добавляем правильный отступ (только пробелы, без табуляций)
-		var indent = ""
-		for i in range(indent_level * 4):
-			indent += " "
-		result.append(indent + stripped_line)
-		
-		# Увеличиваем отступ для строк с двоеточием
-		if stripped_line.ends_with(":"):
-			indent_level += 1
-	
-	return result
-
-func generate_preview_for_ini(ini_text: String) -> String:
-	var commands = parse_ini_text(ini_text)
-	if commands.is_empty():
-		return "Не удалось распарсить INI команды!"
-	
-	var preview_text = ""
-	for idx in range(commands.size()):
-		var cmd = commands[idx]
-		if not cmd.has("action"):
-			preview_text += "❌ Команда #" + str(idx+1) + ": нет секции [action]\n"
-			continue
-		preview_text += "--- Команда #" + str(idx+1) + " ---\n"
-		preview_text += generate_preview_for_single(cmd) + "\n"
-	
-	return preview_text
+# Старые функции проверки отступов и предварительного просмотра удалены - больше не нужны
 
 func show_smart_replace_dialog_v2():
 	write_debug_log("Начинаем создание диалога Smart Replace", "INFO")
@@ -1663,17 +1158,17 @@ func show_smart_replace_dialog_v2():
 	# ===== ВКЛАДКА 2: INI =====
 	var ini_tab = VBoxContainer.new()
 	tab_container.add_child(ini_tab)
-	tab_container.set_tab_title(1, "INI")
+	tab_container.set_tab_title(1, "Команды")
 	
-	# Заголовок для INI вкладки (мобильная версия)
+	# Заголовок для команд (мобильная версия)
 	var ini_label = Label.new()
-	ini_label.text = "Вставьте INI команду от ИИ:"
+	ini_label.text = "Вставьте команды от ИИ:"
 	ini_label.add_theme_font_size_override("font_size", 16)  # Увеличиваем размер шрифта
 	ini_tab.add_child(ini_label)
 	
-	# Поле для INI (мобильная версия)
+	# Поле для команд (мобильная версия)
 	var ini_edit = TextEdit.new()
-	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с INI командами в блоках:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction, speed\n<cod>\nposition += direction * speed * delta\n<end_cod>\n=[end]=\n\n# Или несколько блоков:\n=[command]=\n[add_code]\n<cod>\nvar player_speed = 5.0\n<end_cod>\nposition_type=after_extends\n=[end]=\n\n=[command]=\n[add_function]\nname=move_player\nparameters=direction\n<cod>\nposition += direction * player_speed * delta\n<end_cod>\n=[end]=\n\n# Удаление строк:\n=[command]=\n[delete_code]\nlines=5, 10-15, 23\n=[end]=\n\n# Многострочный код с отступами:\n=[command]=\n[add_function]\nname=complex_function\n<cod>\nif condition:\n    print("True")\nelse:\n    print("False")\n<end_cod>\n=[end]=\n\n# Парсер автоматически найдет и выполнит команды между =[command]= и =[end]='
+	ini_edit.placeholder_text = '# Вставьте ответ от ИИ с новыми командами:\n\n# Пример ответа ИИ:\nЯ добавлю функцию для движения игрока и переменную скорости.\n\n[++3@ var player_speed = 5.0]\n[+++7@ func move_player(direction):\n    position += direction * player_speed * delta]\n\n# Удаление строк:\n[--5@]\n[---2@]  # Удалить функцию целиком\n\n# Многострочный код:\n[++10@ func complex_function():\n    if condition:\n        print("True")\n    else:\n        print("False")]\n\n# Парсер автоматически найдет и выполнит команды формата [++N@], [--N@] и т.д.'
 	ini_edit.custom_minimum_size = Vector2(1160, 650)  # Увеличиваем размер для мобильного
 	ini_edit.add_theme_font_size_override("font_size", 12)  # Увеличиваем размер шрифта
 	ini_tab.add_child(ini_edit)
@@ -1694,7 +1189,7 @@ func show_smart_replace_dialog_v2():
 	ini_buttons.add_child(preview_button)
 	
 	var execute_ini_button = Button.new()
-	execute_ini_button.text = "Выполнить INI"
+	execute_ini_button.text = "Выполнить команды"
 	execute_ini_button.custom_minimum_size = Vector2(150, 50)  # Увеличиваем размер кнопки
 	execute_ini_button.add_theme_font_size_override("font_size", 14)  # Увеличиваем размер шрифта
 	execute_ini_button.pressed.connect(func():
@@ -1929,255 +1424,9 @@ func show_smart_replace_dialog_v2():
 	# Загружаем историю в список
 	refresh_commands_history_list(commands_history_list)
 	
-	# ===== ВКЛАДКА 5: РУЧНАЯ РАБОТА =====
-	var manual_tab = VBoxContainer.new()
-	tab_container.add_child(manual_tab)
-	tab_container.set_tab_title(4, "Ручная работа")
+	# Старый интерфейс для ручной работы удален - теперь используется новый парсер команд
 	
-	# Создаем подвкладки для ручной работы
-	var manual_tab_container = TabContainer.new()
-	manual_tab_container.custom_minimum_size = Vector2(960, 650)
-	manual_tab.add_child(manual_tab_container)
-	
-	# ===== ПОДВКЛАДКА: РАБОТА С ФУНКЦИЯМИ =====
-	var functions_tab = VBoxContainer.new()
-	manual_tab_container.add_child(functions_tab)
-	manual_tab_container.set_tab_title(0, "Функции")
-	
-	# Создаем список функций
-	var function_label = Label.new()
-	function_label.text = "Выберите функцию для замены или выберите 'Добавить новую функцию':"
-	functions_tab.add_child(function_label)
-	
-	var function_list = ItemList.new()
-	function_list.custom_minimum_size = Vector2(960, 200)
-	functions_tab.add_child(function_list)
-	
-	# Загружаем список функций из текущего файла
-	load_functions_list(function_list)
-	var add_new_index = function_list.add_item("➕ Добавить новую функцию")
-	function_list.set_item_metadata(add_new_index, {"is_new": true})
-	
-	# Поля для новой функции
-	var new_func_name_label = Label.new()
-	new_func_name_label.text = "Имя новой функции (например: my_func):"
-	functions_tab.add_child(new_func_name_label)
-	var new_func_name_edit = LineEdit.new()
-	new_func_name_edit.placeholder_text = "my_func"
-	functions_tab.add_child(new_func_name_edit)
-	new_func_name_label.visible = false
-	new_func_name_edit.visible = false
-	
-	var new_func_args_label = Label.new()
-	new_func_args_label.text = "Параметры (например: a, b):"
-	functions_tab.add_child(new_func_args_label)
-	var new_func_args_edit = LineEdit.new()
-	new_func_args_edit.placeholder_text = "a, b"
-	functions_tab.add_child(new_func_args_edit)
-	new_func_args_label.visible = false
-	new_func_args_edit.visible = false
-	
-	# Поле для кода
-	var new_code_label = Label.new()
-	new_code_label.text = "Код функции (только содержимое):"
-	functions_tab.add_child(new_code_label)
-	var new_code_edit = TextEdit.new()
-	new_code_edit.placeholder_text = "Вставьте только код внутри функции (без func и отступов)"
-	new_code_edit.custom_minimum_size = Vector2(960, 200)
-	functions_tab.add_child(new_code_edit)
-	
-	# Переключение видимости полей для новой функции
-	function_list.item_selected.connect(func(idx):
-		var is_new = function_list.get_item_metadata(idx).has("is_new")
-		new_func_name_label.visible = is_new
-		new_func_name_edit.visible = is_new
-		new_func_args_label.visible = is_new
-		new_func_args_edit.visible = is_new
-	)
-	
-	# Кнопки для функций
-	var functions_buttons = HBoxContainer.new()
-	functions_tab.add_child(functions_buttons)
-	
-	var replace_button = Button.new()
-	replace_button.text = "Применить"
-	replace_button.pressed.connect(func():
-		var selected_index = function_list.get_selected_items()
-		if selected_index.size() > 0:
-			var function_data = function_list.get_item_metadata(selected_index[0])
-			if function_data.has("is_new"):
-				add_new_function(new_func_name_edit.text, new_func_args_edit.text, new_code_edit.text)
-			else:
-				smart_replace_function(function_data, new_code_edit.text)
-		dialog.hide()
-	)
-	functions_buttons.add_child(replace_button)
-	
-	var delete_button = Button.new()
-	delete_button.text = "Удалить функцию"
-	delete_button.pressed.connect(func():
-		var selected_index = function_list.get_selected_items()
-		if selected_index.size() > 0:
-			var function_data = function_list.get_item_metadata(selected_index[0])
-			if not function_data.has("is_new"):
-				delete_function(function_data)
-		dialog.hide()
-	)
-	functions_buttons.add_child(delete_button)
-	
-	var cancel_button = Button.new()
-	cancel_button.text = "Отмена"
-	cancel_button.pressed.connect(func(): dialog.hide())
-	functions_buttons.add_child(cancel_button)
-	
-	# ===== ПОДВКЛАДКА: РАБОТА С КОДОМ ВНЕ ФУНКЦИЙ =====
-	var code_tab = VBoxContainer.new()
-	manual_tab_container.add_child(code_tab)
-	manual_tab_container.set_tab_title(1, "Код вне функций")
-	
-	# Заголовок
-	var code_label = Label.new()
-	code_label.text = "Добавление кода вне функций (переменные, константы, импорты и т.д.):"
-	code_tab.add_child(code_label)
-	
-	# Выбор места вставки
-	var position_label = Label.new()
-	position_label.text = "Место вставки:"
-	code_tab.add_child(position_label)
-	
-	var position_container = HBoxContainer.new()
-	code_tab.add_child(position_container)
-	
-	var position_option = OptionButton.new()
-	position_option.add_item("В конец файла")
-	position_option.add_item("В начало файла")
-	position_option.add_item("В начало после extends")
-	position_option.add_item("В начало перед extends")
-	position_option.add_item("На конкретную строку")
-	position_option.selected = 2  # По умолчанию "В начало после extends"
-	position_container.add_child(position_option)
-	
-	var line_number_edit = SpinBox.new()
-	line_number_edit.min_value = 1
-	line_number_edit.max_value = 9999
-	line_number_edit.value = 1
-	line_number_edit.visible = false
-	line_number_edit.tooltip_text = "Номер строки (начиная с 1)"
-	position_container.add_child(line_number_edit)
-	
-	# Показываем/скрываем поле номера строки
-	position_option.item_selected.connect(func(index):
-		line_number_edit.visible = (index == 4)  # "На конкретную строку"
-	)
-	
-	# Поле для кода
-	var file_code_label = Label.new()
-	file_code_label.text = "Код для добавления:"
-	code_tab.add_child(file_code_label)
-	var file_code_edit = TextEdit.new()
-	file_code_edit.placeholder_text = "var my_variable = 10\nconst MY_CONSTANT = 100\n@tool\nextends Node2D"
-	file_code_edit.custom_minimum_size = Vector2(960, 200)
-	code_tab.add_child(file_code_edit)
-	
-	# Разделитель
-	var separator = HSeparator.new()
-	code_tab.add_child(separator)
-	
-	# Удаление строк
-	var delete_code_label = Label.new()
-	delete_code_label.text = "Удаление строк:"
-	code_tab.add_child(delete_code_label)
-	
-	var delete_code_edit = LineEdit.new()
-	delete_code_edit.placeholder_text = "Введите номера строк (например: 5, 10-15, 23)"
-	delete_code_edit.custom_minimum_size = Vector2(960, 30)
-	code_tab.add_child(delete_code_edit)
-	
-	# Кнопки для работы с кодом
-	var code_buttons = HBoxContainer.new()
-	code_tab.add_child(code_buttons)
-	
-	var add_code_button = Button.new()
-	add_code_button.text = "Добавить код"
-	add_code_button.pressed.connect(func():
-		var position = position_option.selected
-		var line_number = int(line_number_edit.value)
-		add_code_to_file(file_code_edit.text, position, line_number)
-		dialog.hide()
-	)
-	code_buttons.add_child(add_code_button)
-	
-	var delete_code_button = Button.new()
-	delete_code_button.text = "Удалить строки"
-	delete_code_button.pressed.connect(func():
-		delete_lines_from_file(delete_code_edit.text)
-		dialog.hide()
-	)
-	code_buttons.add_child(delete_code_button)
-	
-	var code_cancel_button = Button.new()
-	code_cancel_button.text = "Отмена"
-	code_cancel_button.pressed.connect(func(): dialog.hide())
-	code_buttons.add_child(code_cancel_button)
-	
-	# ===== ПОДВКЛАДКА: ИСТОРИЯ ИЗВЛЕЧЕННЫХ КОМАНД =====
-	var history_tab = VBoxContainer.new()
-	manual_tab_container.add_child(history_tab)
-	manual_tab_container.set_tab_title(2, "История команд")
-	
-	# Заголовок
-	var history_label = Label.new()
-	history_label.text = "История извлеченных и примененных команд:"
-	history_tab.add_child(history_label)
-	
-	# Поле для отображения деталей выбранной команды
-	var history_details_label = Label.new()
-	history_details_label.text = "Детали выбранной команды:"
-	history_tab.add_child(history_details_label)
-	
-	var history_details_edit = TextEdit.new()
-	history_details_edit.custom_minimum_size = Vector2(960, 200)
-	history_details_edit.editable = false
-	history_tab.add_child(history_details_edit)
-	
-	# Список истории команд
-	var history_list = ItemList.new()
-	history_list.custom_minimum_size = Vector2(960, 400)
-	history_list.item_selected.connect(func(index):
-		if index >= 0 and index < extracted_commands_history.size():
-			var entry = extracted_commands_history[index]
-			history_details_edit.text = "Время: " + entry.timestamp + "\n\nКоманды:\n" + entry.commands
-	)
-	history_tab.add_child(history_list)
-	
-	# Кнопки для работы с историей
-	var history_buttons = HBoxContainer.new()
-	history_tab.add_child(history_buttons)
-	
-	var refresh_history_button = Button.new()
-	refresh_history_button.text = "Обновить список"
-	refresh_history_button.pressed.connect(func():
-		refresh_history_list(history_list)
-	)
-	history_buttons.add_child(refresh_history_button)
-	
-	var clear_history_button = Button.new()
-	clear_history_button.text = "Очистить историю"
-	clear_history_button.pressed.connect(func():
-		extracted_commands_history.clear()
-		save_extracted_commands_history()
-		refresh_history_list(history_list)
-		history_details_edit.text = ""
-	)
-	history_buttons.add_child(clear_history_button)
-	
-	var history_cancel_button = Button.new()
-	history_cancel_button.text = "Закрыть"
-	history_cancel_button.pressed.connect(func(): dialog.hide())
-	history_buttons.add_child(history_cancel_button)
-	
-	# Загружаем историю в список
-	refresh_history_list(history_list)
+	# Старый интерфейс для работы с кодом удален - теперь используется новый парсер команд
 	
 	# Показываем диалог
 	write_debug_log("Добавляем диалог в base_control", "INFO")
@@ -2192,707 +1441,21 @@ func show_smart_replace_dialog_v2():
 	else:
 		write_debug_log("ОШИБКА: Диалог не был добавлен в дерево", "ERROR")
 
-func load_functions_list(function_list: ItemList):
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var functions = find_functions_in_file(file_path)
-			
-			for func_data in functions:
-				var display_text = func_data.signature + " (строка " + str(func_data.line) + ")"
-				var index = function_list.add_item(display_text)
-				function_list.set_item_metadata(index, func_data)
-			
-			if functions.size() == 0:
-				function_list.add_item("Функции не найдены")
+# Функция load_functions_list удалена - больше не нужна
 
-func find_functions_in_file(file_path: String) -> Array:
-	var functions = []
-	
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return functions
-	
-	var lines = file.get_as_text().split("\n")
-	file.close()
-	
-	for i in range(lines.size()):
-		var line = lines[i].strip_edges()
-		if line.begins_with("func "):
-			var func_data = {
-				"signature": line,
-				"line": i + 1,
-				"start_index": i,
-				"end_index": find_function_end(lines, i)
-			}
-			functions.append(func_data)
-	
-	return functions
+# Функции find_functions_in_file и find_function_end удалены - больше не нужны
 
-func find_function_end(lines: Array, start_index: int) -> int:
-	var i = start_index + 1
-	var indent_level = get_indent_level(lines[start_index])
-	
-	while i < lines.size():
-		var line = lines[i]
-		var clean_line = line.strip_edges()
-		
-		# Пропускаем пустые строки
-		if clean_line == "":
-			i += 1
-			continue
-		
-		# Проверяем, не нашли ли мы следующую функцию или класс
-		if clean_line.begins_with("func ") or clean_line.begins_with("class_name") or clean_line.begins_with("extends") or clean_line.begins_with("var ") or clean_line.begins_with("const "):
-			var current_indent = get_indent_level(line)
-			if current_indent <= indent_level:
-				return i
-		
-		# Проверяем, не закончилась ли функция (меньший отступ)
-		var current_indent = get_indent_level(line)
-		if current_indent < indent_level:
-			return i
-		
-		i += 1
-	
-	return i
+# Функции для замены функций удалены - больше не нужны
 
-func smart_replace_function(function_data: Dictionary, new_code: String):
-	smart_replace_function_with_comment(function_data, new_code, "")
+# Функции для замены функций в файле удалены - больше не нужны
 
-func smart_replace_function_with_comment(function_data: Dictionary, new_code: String, comment: String):
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = replace_function_content_with_comment(file_path, function_data, new_code, comment)
-			
-			if success:
-				print("Функция успешно заменена!")
-				# Автоматически перезагружаем файл в редакторе
-				pass
-			else:
-				print("Ошибка при замене функции!")
+# Все старые функции для работы с функциями удалены - теперь используется новый парсер команд 
 
-func replace_function_content(file_path: String, function_data: Dictionary, new_code: String) -> bool:
-	return replace_function_content_with_comment(file_path, function_data, new_code, "")
+# Функция generate_preview_for_single удалена - больше не нужна 
 
-func replace_function_content_with_comment(file_path: String, function_data: Dictionary, new_code: String, comment: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	# Заменяем содержимое функции
-	var new_content = replace_function_content_with_comment_in_text(content, function_data, new_code, comment)
-	if new_content == content:
-		return false
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true
+# Старые функции работы с файлами удалены - теперь используется новый парсер
 
-func replace_function_content_in_text(content: String, function_data: Dictionary, new_code: String) -> String:
-	return replace_function_content_with_comment_in_text(content, function_data, new_code, "")
-
-func replace_function_content_with_comment_in_text(content: String, function_data: Dictionary, new_code: String, comment: String) -> String:
-	var lines = content.split("\n")
-	var result_lines = []
-	var i = 0
-	
-	while i < lines.size():
-		if i == function_data.start_index:
-			# Проверяем, есть ли комментарий над функцией
-			var comment_start = i
-			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
-				comment_start = i - 1
-				# Проверяем, есть ли пустая строка перед комментарием
-				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
-					comment_start = i - 2
-			
-			# Добавляем новый комментарий (если есть)
-			if comment.strip_edges() != "":
-				result_lines.append("")
-				result_lines.append("#" + comment)
-			
-			# Добавляем сигнатуру функции
-			result_lines.append(lines[i])
-			
-			# Добавляем новый код с правильными отступами
-			var indent = get_indentation(lines[i])
-			var new_code_lines = new_code.split("\n")
-			
-			for code_line in new_code_lines:
-				if code_line.strip_edges() != "":
-					result_lines.append(indent + "    " + code_line)  # 4 пробела вместо табуляции
-				else:
-					result_lines.append("")
-			
-			# Пропускаем старое содержимое функции и комментарий
-			i = function_data.end_index
-		else:
-			# Обычная строка, копируем как есть
-			result_lines.append(lines[i])
-			i += 1
-	
-	return "\n".join(result_lines)
-
-func replace_function_in_file(file_path: String, old_signature: String, new_function: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	# Находим и заменяем функцию
-	var new_content = find_and_replace_function(content, old_signature, new_function)
-	if new_content == content:
-		return false
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true
-
-func find_and_replace_function(content: String, old_signature: String, new_function: String) -> String:
-	var lines = content.split("\n")
-	var result_lines = []
-	var i = 0
-	
-	# Очищаем сигнатуру от лишних пробелов
-	var clean_signature = old_signature.strip_edges()
-	print("Ищем функцию: '", clean_signature, "'")
-	
-	while i < lines.size():
-		var line = lines[i]
-		var clean_line = line.strip_edges()
-		
-		# Проверяем, начинается ли строка с сигнатуры функции
-		if clean_line.begins_with(clean_signature):
-			print("Найдена функция на строке ", i + 1, ": '", clean_line, "'")
-			
-			# Нашли функцию! Пропускаем её полностью
-			var indent = get_indentation(line)
-			var old_end = skip_function(lines, i)
-			
-			# Добавляем новую функцию с правильным отступом
-			var new_function_lines = new_function.split("\n")
-			for func_line in new_function_lines:
-				if func_line.strip_edges() != "":
-					result_lines.append(indent + func_line)
-				else:
-					result_lines.append("")
-			
-			i = old_end
-			print("Функция заменена!")
-		else:
-			# Обычная строка, копируем как есть
-			result_lines.append(line)
-			i += 1
-	
-	return "\n".join(result_lines)
-
-func get_indentation(line: String) -> String:
-	var indent = ""
-	for char in line:
-		if char == " " or char == "\t":
-			indent += char
-		else:
-			break
-	return indent
-
-func skip_function(lines: Array, start_index: int) -> int:
-	var i = start_index
-	var indent_level = -1
-	
-	# Определяем уровень отступа первой строки функции
-	if start_index < lines.size():
-		indent_level = get_indent_level(lines[start_index])
-		print("Уровень отступа функции: ", indent_level)
-	
-	i = start_index + 1  # Начинаем со следующей строки
-	
-	while i < lines.size():
-		var line = lines[i]
-		var clean_line = line.strip_edges()
-		
-		# Пропускаем пустые строки
-		if clean_line == "":
-			i += 1
-			continue
-		
-		# Проверяем, не нашли ли мы следующую функцию или класс
-		if clean_line.begins_with("func ") or clean_line.begins_with("class_name") or clean_line.begins_with("extends") or clean_line.begins_with("var ") or clean_line.begins_with("const "):
-			# Проверяем уровень отступа
-			var current_indent = get_indent_level(line)
-			if current_indent <= indent_level:
-				print("Найдена следующая функция/переменная на строке ", i + 1, ": '", clean_line, "'")
-				return i
-		
-		# Проверяем, не закончилась ли функция (меньший отступ)
-		var current_indent = get_indent_level(line)
-		if current_indent < indent_level:
-			print("Функция закончилась на строке ", i, " (меньший отступ)")
-			return i
-		
-		i += 1
-	
-	print("Достигнут конец файла, функция заканчивается на строке ", i)
-	return i
-
-func get_indent_level(line: String) -> int:
-	var level = 0
-	for char in line:
-		if char == " ":
-			level += 1
-		elif char == "\t":
-			level += 4  # Таб = 4 пробела
-		else:
-			break
-	return level 
-
-func add_new_function(name: String, args: String, code: String):
-	if name.strip_edges() == "":
-		print("Имя функции не может быть пустым!")
-		return
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var file = FileAccess.open(file_path, FileAccess.READ)
-			if not file:
-				print("Ошибка открытия файла!")
-				return
-			var content = file.get_as_text()
-			file.close()
-			var lines = content.split("\n")
-			# Формируем функцию
-			var func_header = "func " + name.strip_edges() + "(" + args.strip_edges() + "):" if args.strip_edges() != "" else "func " + name.strip_edges() + "():"
-			var func_lines = [func_header]
-			for code_line in code.split("\n"):
-				if code_line.strip_edges() != "":
-					func_lines.append("    " + code_line)  # 4 пробела вместо табуляции
-				else:
-					func_lines.append("")
-			# Добавляем функцию в конец файла
-			if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
-				lines.append("")
-			for func_line in func_lines:
-				lines.append(func_line)
-			var new_content = "\n".join(lines)
-			file = FileAccess.open(file_path, FileAccess.WRITE)
-			if not file:
-				print("Ошибка открытия файла для записи!")
-				return
-			file.store_string(new_content)
-			file.close()
-			print("Функция успешно добавлена!")
-			# Автоматически перезагружаем файл в редакторе
-			pass
-
-func delete_function(function_data: Dictionary):
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = remove_function_from_file(file_path, function_data)
-			
-			if success:
-				print("Функция успешно удалена!")
-				# Автоматически перезагружаем файл в редакторе
-				pass
-			else:
-				print("Ошибка при удалении функции!")
-
-func remove_function_from_file(file_path: String, function_data: Dictionary) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	# Удаляем функцию
-	var new_content = remove_function_from_text(content, function_data)
-	if new_content == content:
-		return false
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true
-
-func remove_function_from_text(content: String, function_data: Dictionary) -> String:
-	var lines = content.split("\n")
-	var result_lines = []
-	var i = 0
-	
-	while i < lines.size():
-		if i == function_data.start_index:
-			# Проверяем, есть ли комментарий над функцией
-			var comment_start = i
-			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
-				comment_start = i - 1
-				# Проверяем, есть ли пустая строка перед комментарием
-				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
-					comment_start = i - 2
-			
-			# Пропускаем комментарий и функцию (от comment_start до end_index)
-			i = function_data.end_index
-		else:
-			# Обычная строка, копируем как есть
-			result_lines.append(lines[i])
-			i += 1
-	
-	return "\n".join(result_lines) 
-
-func add_new_function_with_comment(name: String, args: String, code: String, comment: String):
-	if name.strip_edges() == "":
-		print("Имя функции не может быть пустым!")
-		return
-	
-	# Проверяем, существует ли уже функция с таким именем
-	var existing_function = find_function_by_name(name)
-	if not existing_function.is_empty():
-		print("Функция с именем '" + name + "' уже существует! Пропускаем добавление.")
-		return
-		
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = append_function_with_comment_to_file(file_path, name, args, code, comment)
-			
-			if success:
-				print("Функция с комментарием успешно добавлена!")
-				pass
-			else:
-				print("Ошибка при добавлении функции!")
-
-func append_function_with_comment_to_file(file_path: String, name: String, args: String, code: String, comment: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	
-	var content = file.get_as_text()
-	file.close()
-	
-	# Дополнительная проверка на существующую функцию
-	var lines = content.split("\n")
-	for line in lines:
-		var stripped_line = line.strip_edges()
-		if stripped_line.begins_with("func " + name + "(") or stripped_line.begins_with("func " + name + "():"):
-			print("Функция '" + name + "' уже существует в файле! Пропускаем добавление.")
-			return false
-	
-	# Добавляем пустую строку если файл не заканчивается пустой строкой
-	if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
-		lines.append("")
-	
-	# Добавляем комментарий если он есть
-	if comment.strip_edges() != "":
-		lines.append("# " + comment)
-	
-	# Формируем функцию
-	var func_header = "func " + name.strip_edges() + "(" + args.strip_edges() + "):" if args.strip_edges() != "" else "func " + name.strip_edges() + "():"
-	lines.append(func_header)
-	
-	# Добавляем код функции
-	var code_lines = code.split("\n")
-	for code_line in code_lines:
-		if code_line.strip_edges() != "":
-			lines.append("    " + code_line)  # 4 пробела вместо табуляции
-		else:
-			lines.append("")
-	
-	var new_content = "\n".join(lines)
-	
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	
-	file.store_string(new_content)
-	file.close()
-	
-	return true 
-
-func generate_preview_for_single(data: Dictionary) -> String:
-	if not data.has("action"):
-		return "❌ Нет поля 'action'!"
-	var action = data.action
-	match action:
-		"add_function":
-			return generate_add_function_preview(data)
-		"replace_function":
-			return generate_replace_function_preview(data)
-		"delete_function":
-			return generate_delete_function_preview(data)
-		"add_code":
-			return generate_add_code_preview(data)
-		"delete_code":
-			return generate_delete_code_preview(data)
-		_:
-			return "Неизвестное действие: " + action 
-
-func add_code_to_file(code: String, position: int = 0, line_number: int = 1):
-	if code.strip_edges() == "":
-		print("Код не может быть пустым!")
-		return
-	
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = insert_code_to_file(file_path, code, position, line_number)
-			if success:
-				print("Код успешно добавлен!")
-			else:
-				print("Ошибка при добавлении кода!")
-
-func delete_lines_from_file(lines_param: String):
-	if lines_param.strip_edges() == "":
-		print("Номера строк для удаления не могут быть пустыми!")
-		return
-	
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = remove_lines_from_file(file_path, lines_param)
-			if success:
-				print("Строки успешно удалены!")
-			else:
-				print("Ошибка при удалении строк!") 
-
-func insert_code_to_file(file_path: String, code: String, position: int, line_number: int) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-
-	var content = file.get_as_text()
-	file.close()
-
-	var lines = content.split("\n")
-	var code_lines = code.split("\n")
-	var insert_index = 0
-
-	# Определяем место вставки
-	match position:
-		0:  # В конец файла
-			insert_index = lines.size()
-			# Добавляем пустую строку если файл не заканчивается пустой строкой
-			if lines.size() > 0 and lines[lines.size()-1].strip_edges() != "":
-				lines.append("")
-				insert_index += 1
-		1:  # В начало файла
-			insert_index = 0
-		2:  # В начало после extends
-			insert_index = find_extends_line(lines) + 1
-			if insert_index <= 0:  # Если extends не найден, вставляем в начало
-				insert_index = 0
-		3:  # В начало перед extends
-			insert_index = find_extends_line(lines)
-			if insert_index < 0:  # Если extends не найден, вставляем в начало
-				insert_index = 0
-		4:  # На конкретную строку
-			insert_index = line_number - 1  # Конвертируем в индекс (начиная с 0)
-			if insert_index < 0:
-				insert_index = 0
-			elif insert_index > lines.size():
-				insert_index = lines.size()
-
-	# Вставляем код
-	for i in range(code_lines.size()):
-		lines.insert(insert_index + i, code_lines[i])
-
-	var new_content = "\n".join(lines)
-
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-
-	file.store_string(new_content)
-	file.close()
-
-	return true
-
-func remove_lines_from_file(file_path: String, lines_param: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-
-	var content = file.get_as_text()
-	file.close()
-
-	# Удаляем строки
-	var new_content = remove_lines_from_text(content, lines_param)
-	if new_content == content:
-		return false  # Строки не найдены
-
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-
-	file.store_string(new_content)
-	file.close()
-
-	return true
-
-func remove_lines_from_text(content: String, lines_param: String) -> String:
-	var lines = content.split("\n")
-	var lines_to_remove = []
-	
-	# Парсим параметр lines
-	var parts = lines_param.split(",")
-	for part in parts:
-		part = part.strip_edges()
-		if "-" in part:
-			# Диапазон строк (например: "23-40")
-			var range_parts = part.split("-")
-			if range_parts.size() == 2:
-				var start_line = range_parts[0].strip_edges().to_int()
-				var end_line = range_parts[1].strip_edges().to_int()
-				for i in range(start_line, end_line + 1):
-					if i > 0 and i <= lines.size():
-						lines_to_remove.append(i - 1)  # Конвертируем в индекс (начиная с 0)
-		else:
-			# Отдельная строка
-			var line_num = part.to_int()
-			if line_num > 0 and line_num <= lines.size():
-				lines_to_remove.append(line_num - 1)  # Конвертируем в индекс (начиная с 0)
-	
-	# Сортируем номера строк в обратном порядке для удаления с конца
-	lines_to_remove.sort()
-	lines_to_remove.reverse()
-	
-	# Удаляем строки
-	for line_index in lines_to_remove:
-		if line_index >= 0 and line_index < lines.size():
-			lines.remove_at(line_index)
-	
-	return "\n".join(lines)
-
-func find_extends_line(lines: Array) -> int:
-	# Ищем строку с extends
-	for i in range(lines.size()):
-		var line = lines[i].strip_edges()
-		if line.begins_with("extends "):
-			return i
-	return -1  # extends не найден 
-
-func smart_replace_function_with_new_signature(function_data: Dictionary, new_code: String, comment: String, new_signature: String):
-	var editor_interface = get_editor_interface()
-	var script_editor = editor_interface.get_script_editor()
-	if script_editor:
-		var current_script = script_editor.get_current_script()
-		if current_script:
-			var file_path = current_script.resource_path
-			var success = replace_function_content_with_new_signature(file_path, function_data, new_code, comment, new_signature)
-			if success:
-				print("Функция успешно заменена с новой сигнатурой!")
-			else:
-				print("Ошибка при замене функции!")
-
-func replace_function_content_with_new_signature(file_path: String, function_data: Dictionary, new_code: String, comment: String, new_signature: String) -> bool:
-	# Читаем файл
-	var file = FileAccess.open(file_path, FileAccess.READ)
-	if not file:
-		return false
-	var content = file.get_as_text()
-	file.close()
-	# Заменяем содержимое функции и сигнатуру
-	var new_content = replace_function_content_with_new_signature_in_text(content, function_data, new_code, comment, new_signature)
-	if new_content == content:
-		return false
-	# Записываем обновленный контент
-	file = FileAccess.open(file_path, FileAccess.WRITE)
-	if not file:
-		return false
-	file.store_string(new_content)
-	file.close()
-	return true
-
-func replace_function_content_with_new_signature_in_text(content: String, function_data: Dictionary, new_code: String, comment: String, new_signature: String) -> String:
-	var lines = content.split("\n")
-	var result_lines = []
-	var i = 0
-	while i < lines.size():
-		if i == function_data.start_index:
-			# Проверяем, есть ли комментарий над функцией
-			var comment_start = i
-			if i > 0 and lines[i-1].strip_edges().begins_with("#"):
-				comment_start = i - 1
-				if comment_start > 0 and lines[comment_start-1].strip_edges() == "":
-					comment_start = i - 2
-			# Добавляем новый комментарий (если есть)
-			if comment.strip_edges() != "":
-				result_lines.append("")
-				result_lines.append("#" + comment)
-			# Добавляем новую сигнатуру функции
-			result_lines.append(new_signature)
-			# Добавляем новый код с правильными отступами
-			var indent = get_indentation(new_signature)
-			var new_code_lines = new_code.split("\n")
-			for code_line in new_code_lines:
-				if code_line.strip_edges() != "":
-					result_lines.append(indent + "    " + code_line)  # 4 пробела вместо табуляции
-				else:
-					result_lines.append("")
-			# Пропускаем старое содержимое функции и комментарий
-			i = function_data.end_index
-		else:
-			result_lines.append(lines[i])
-			i += 1
-	return "\n".join(result_lines) 
+# Остальные старые функции для работы с функциями удалены - теперь используется новый парсер команд 
 
 # ===== AI ЧАТ ФУНКЦИИ =====
 
@@ -3139,92 +1702,21 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 	# Всегда обновляем информацию о скрипте при каждом сообщении
 	current_script_info = get_current_script_info()
 	
-	# Добавляем инструкции только в первом сообщении сессии для оптимизации
-	if is_first_message_in_session:
-		instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot. 
+	# Добавляем оптимизированные инструкции при каждом сообщении
+	instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot v2.2.
 
-Твоя задача - помогать пользователю редактировать код в GDScript файлах. Когда пользователь просит изменить код, ты должен:
+ОБЯЗАТЕЛЬНО используй команды для ЛЮБЫХ изменений кода:
+- [++N@ код] - добавить код в строку N
+- [+++N@ код] - заменить блок в строке N (функция/if/for)
+- [--N@] - удалить строку N
+- [---N@] - удалить блок в строке N
+- Используй \\n для переноса строк
 
-1. Ответить на естественном языке
-2. Скрыто вставить INI команды для выполнения изменений между маркерами =[command]= и =[end]=
-3. Пользователь не должен видеть эти команды, только твой текстовый ответ
-4. ВАЖНО: Если пользователь спрашивает о скрипте, обязательно упомяни информацию о файле, который ты видишь
-5. ВАЖНО: Если пользователь просит изменить код, ОБЯЗАТЕЛЬНО используй INI команды в формате =[command]= ... =[end]=
-6. ВАЖНО: НЕ пиши лишние объяснения о том, что ты не можешь изменять файлы. Просто генерируй INI команды
-7. ВАЖНО: НЕ упоминай "скрытые INI команды" или "эти команды не будут выполнены". Просто отвечай естественно
-8. ВАЖНО: Если пользователь просит изменить код, сразу давай краткий ответ и INI команды
-9. ВАЖНО: ВСЕГДА используй INI команды для ЛЮБЫХ изменений кода. НЕ показывай код без INI команд
-10. ВАЖНО: Если пользователь просит добавить, изменить или удалить что-то в коде, ОБЯЗАТЕЛЬНО используй =[command]= блоки
-11. ВАЖНО: При добавлении функций проверяй, не существует ли уже функция с таким именем. НЕ создавай дублирующиеся функции
+ПРИМЕРЫ: [++3@ print("Привет")], [+++5@ func test():\\n    return true], [--7@], [---10@]
 
-ФОРМАТ INI КОМАНД:
-Команды должны быть в формате:
-=[command]=
-[action]
-parameter=value
-<cod>
-код
-<end_cod>
-=[end]=
+Отвечай естественно, но скрыто добавляй команды. Пользователь не должен их видеть.
 
-ДОСТУПНЫЕ ДЕЙСТВИЯ:
-- [add_function] - добавить НОВУЮ функцию (если функции с таким именем НЕТ)
-- [replace_function] - заменить СУЩЕСТВУЮЩУЮ функцию (если функция с таким именем УЖЕ ЕСТЬ)
-- [delete_function] или [remove_function] - удалить функцию
-- [add_code] - добавить код вне функций
-- [delete_code] или [remove_code] - удалить строки кода
-
-ВАЖНО: 
-- Если функция УЖЕ СУЩЕСТВУЕТ в коде, используй [replace_function]
-- Если функции НЕТ в коде, используй [add_function]
-- НИКОГДА не используй [add_function] для существующих функций!
-
-ПРИМЕРЫ КОМАНД:
-
-Добавление НОВОЙ функции:
-=[command]=
-[add_function]
-name=test_function
-comment=Тестовая функция
-<cod>
-	print("Это тестовая функция!")
-	return true
-<end_cod>
-=[end]=
-
-ЗАМЕНА существующей функции:
-=[command]=
-[replace_function]
-name=test_function
-<cod>
-	print("Это измененная тестовая функция!")
-	return false
-<end_cod>
-=[end]=
-
-ВАЖНО: ВСЕГДА используй этот формат для любых изменений кода. НЕ показывай код без =[command]= блоков!
-
-Добавление кода:
-=[command]=
-[add_code]
-position=2
-<cod>
-# Новые константы
-const TEST_VALUE = 100
-<end_cod>
-=[end]=
-
-Удаление функции:
-=[command]=
-[delete_function]
-name=old_function_name
-=[end]=
-
-Или альтернативный вариант:
-=[command]=
-[remove_function]
-name=old_function_name
-=[end]=
+Если пользователь использует "(Admin)" или "(admin)" - ты разработчику Алексею, отвечай технически и сообщай модель AI.
 
 """
 	
@@ -3239,17 +1731,7 @@ name=old_function_name
 
 """.format(current_script_info)
 	
-	# Добавляем краткое напоминание для последующих сообщений
-	if not is_first_message_in_session:
-		instructions = """НАПОМИНАНИЕ: 
-- Используй INI команды (=[command]= ... =[end]=) для любых изменений кода
-- Для НОВЫХ функций используй [add_function]
-- Для СУЩЕСТВУЮЩИХ функций используй [replace_function]
-- Для удаления функций используй [delete_function] или [remove_function]
-- Для удаления кода используй [delete_code] или [remove_code]
-- Всегда проверяй существование функций перед добавлением
-
-"""
+	# Удаляем старый блок с напоминанием, так как теперь инструкции отправляются при каждом сообщении
 		print("=== ИНФОРМАЦИЯ ДЛЯ AI ===")
 		print("Скрипт: ", current_script_info.filename)
 		print("Путь: ", current_script_info.path)
@@ -3267,7 +1749,7 @@ name=old_function_name
 
 ПОЛЬЗОВАТЕЛЬ: {message}
 
-Помни: отвечай естественно, как обычный помощник, но скрыто добавляй INI команды для выполнения изменений."""
+Помни: отвечай естественно, как обычный помощник, но скрыто добавляй команды формата [++N@ код], [--N@] для выполнения изменений."""
 	
 	# Формируем историю чата для контекста
 	var history_text = ""
@@ -3771,26 +2253,199 @@ func show_extracted_commands(ini_commands: String):
 	
 	print("INI команды извлечены и готовы к применению")
 
+# ===== НОВЫЙ ПАРСЕР КОМАНД =====
+
 func extract_ini_commands(ai_response: String) -> String:
-	# Ищем блоки команд между =[command]= и =[end]=
+	# Ищем новые команды формата [++N@], [+++N@], [--N@], [---N@]
+	var new_commands = extract_new_commands(ai_response)
+	return new_commands
+
+func extract_new_commands(ai_response: String) -> String:
+	# Ищем новые команды в тексте
 	var commands = []
-	var lines = ai_response.split("\n")
-	var in_command = false
-	var current_command = []
+	var regex = RegEx.new()
+	regex.compile("\\[\\+\\+\\+?\\d+@[^\\]]*\\]|\\[\\-\\-\\-?\\d+@[^\\]]*\\]")
 	
-	for line in lines:
-		if line.strip_edges() == "=[command]=":
-			in_command = true
-			current_command = [line]
-		elif line.strip_edges() == "=[end]=":
-			if in_command:
-				current_command.append(line)
-				commands.append("\n".join(current_command))
-				in_command = false
-		elif in_command:
-			current_command.append(line)
+	var results = regex.search_all(ai_response)
+	for result in results:
+		commands.append(result.get_string())
 	
-	return "\n\n".join(commands)
+	return "\n".join(commands)
+
+func parse_new_command(command: String) -> Dictionary:
+	# Парсим новую команду формата [++N@ код] или [--N@]
+	var result = {
+		"type": "",
+		"line": 0,
+		"code": "",
+		"deep": false
+	}
+	
+	# Убираем внешние скобки
+	var clean_command = command.substr(1, command.length() - 2)
+	
+	# Определяем тип команды
+	if clean_command.begins_with("+++"):
+		result.type = "replace_deep"
+		result.deep = true
+		clean_command = clean_command.substr(3)
+	elif clean_command.begins_with("++"):
+		result.type = "insert"
+		clean_command = clean_command.substr(2)
+	elif clean_command.begins_with("---"):
+		result.type = "delete_deep"
+		result.deep = true
+		clean_command = clean_command.substr(3)
+	elif clean_command.begins_with("--"):
+		result.type = "delete"
+		clean_command = clean_command.substr(2)
+	
+	# Извлекаем номер строки и код
+	var parts = clean_command.split("@", true, 1)
+	if parts.size() >= 1:
+		result.line = int(parts[0])
+	
+	if parts.size() >= 2:
+		result.code = parts[1].strip_edges()
+		# Обрабатываем экранированные символы
+		result.code = result.code.replace("\\n", "\n")
+		result.code = result.code.replace("\\t", "\t")
+	
+	return result
+
+func execute_new_commands(commands: String, current_code: String) -> String:
+	print("=== ОТЛАДКА: execute_new_commands ===")
+	print("Входные команды: ", commands)
+	
+	# Выполняем новые команды
+	var lines = current_code.split("\n")
+	var new_commands = extract_new_commands(commands)
+	
+	print("Извлеченные команды: ", new_commands)
+	
+	if new_commands == "":
+		print("Нет команд для выполнения")
+		return current_code
+	
+	var command_list = new_commands.split("\n")
+	# Сортируем команды по номеру строки (от больших к меньшим для удаления)
+	# Сначала выполняем команды удаления снизу вверх, затем остальные сверху вниз
+	var delete_commands = []
+	var other_commands = []
+	
+	for command in command_list:
+		if command.strip_edges() == "":
+			continue
+		var parsed = parse_new_command(command)
+		if parsed.type.begins_with("delete"):
+			delete_commands.append(command)
+		else:
+			other_commands.append(command)
+	
+	# Сортируем команды удаления по убыванию номера строки
+	delete_commands.sort_custom(func(a, b): 
+		var a_parsed = parse_new_command(a)
+		var b_parsed = parse_new_command(b)
+		return a_parsed.line > b_parsed.line
+	)
+	
+	# Сортируем остальные команды по возрастанию номера строки
+	other_commands.sort_custom(func(a, b): 
+		var a_parsed = parse_new_command(a)
+		var b_parsed = parse_new_command(b)
+		return a_parsed.line < b_parsed.line
+	)
+	
+	# Объединяем команды: сначала удаления, потом остальные
+	command_list = delete_commands + other_commands
+	
+	for command in command_list:
+		if command.strip_edges() == "":
+			continue
+		
+		var parsed = parse_new_command(command)
+		lines = execute_single_new_command(parsed, lines)
+	
+	return "\n".join(lines)
+
+func execute_single_new_command(parsed: Dictionary, lines: Array) -> Array:
+	var line_num = parsed.line - 1  # Конвертируем в индекс массива
+	
+	match parsed.type:
+		"insert":
+			# Добавляем код в строку N
+			if line_num >= lines.size():
+				# Если строка не существует, добавляем в конец
+				lines.append(parsed.code)
+			else:
+				# Вставляем код, сдвигая остальные строки
+				lines.insert(line_num, parsed.code)
+		
+		"replace_deep":
+			# Заменяем строку и весь вложенный блок
+			if line_num < lines.size():
+				var start_line = line_num
+				var end_line = find_block_end(lines, line_num)
+				
+				# Удаляем старый блок
+				for i in range(start_line, end_line + 1):
+					if i < lines.size():
+						lines.remove_at(start_line)
+				
+				# Вставляем новый код
+				var new_lines = parsed.code.split("\n")
+				for i in range(new_lines.size() - 1, -1, -1):
+					lines.insert(start_line, new_lines[i])
+		
+		"delete":
+			# Удаляем только строку N
+			if line_num < lines.size():
+				lines.remove_at(line_num)
+		
+		"delete_deep":
+			# Удаляем строку и все вложенные блоки
+			if line_num < lines.size():
+				var start_line = line_num
+				var end_line = find_block_end(lines, line_num)
+				
+				# Удаляем весь блок
+				for i in range(start_line, end_line + 1):
+					if start_line < lines.size():
+						lines.remove_at(start_line)
+	
+	return lines
+
+func find_block_end(lines: Array, start_line: int) -> int:
+	# Находим конец блока кода (функция, if, for, while и т.д.)
+	if start_line >= lines.size():
+		return start_line
+	
+	var start_indent = get_line_indent(lines[start_line])
+	var current_line = start_line + 1
+	
+	while current_line < lines.size():
+		var line = lines[current_line]
+		var line_indent = get_line_indent(line)
+		
+		# Если отступ меньше или равен начальному, блок закончился
+		if line_indent <= start_indent and line.strip_edges() != "":
+			break
+		
+		current_line += 1
+	
+	return current_line - 1
+
+func get_line_indent(line: String) -> int:
+	# Получаем количество пробелов в начале строки
+	var indent = 0
+	for char in line:
+		if char == " ":
+			indent += 1
+		elif char == "\t":
+			indent += 4  # Табуляция = 4 пробела
+		else:
+			break
+	return indent
 
 # Функция для обновления списка ошибок Godot
 func update_errors_list(errors_list: ItemList):

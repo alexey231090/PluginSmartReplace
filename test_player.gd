@@ -6,7 +6,7 @@ var health = 100
 func _ready():
 	print("Player ready")
 
-func _process(delta):
+func _process(_delta):
 	pass
 
 # Тестовая функция для теста плагина
