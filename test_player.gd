@@ -24,8 +24,7 @@ func testIflevel():
 				if 34==32:
 					if 34>32:
 						print("уровни вложинности")
-func Go():
-	print("Идти")
+
 func Move(): 
 	pass
 func jump():

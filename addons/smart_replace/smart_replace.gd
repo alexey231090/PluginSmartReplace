@@ -80,6 +80,7 @@ const EXTRACTED_COMMANDS_HISTORY_FILE = "res://extracted_commands_history.json"
 
 # История выполненных команд для предотвращения дублирования
 var executed_commands_history = []
+const EXECUTED_COMMANDS_HISTORY_FILE = "res://executed_commands_history.json"
 
 # Флаг для отслеживания первого сообщения в сессии
 var is_first_message_in_session = true
@@ -451,6 +452,7 @@ func update_api_key_interface():
 # Функция для добавления команды в историю
 func add_to_extracted_commands_history(commands: String, timestamp: String = ""):
 	if commands.strip_edges() == "":
+		print("Попытка добавить пустые команды в историю")
 		return
 	
 	if timestamp == "":
@@ -461,8 +463,11 @@ func add_to_extracted_commands_history(commands: String, timestamp: String = "")
 		"commands": commands
 	}
 	
+	print("Добавляем в историю команд: '", commands, "'")
 	extracted_commands_history.append(entry)
+	print("Размер истории команд: ", extracted_commands_history.size())
 	save_extracted_commands_history()
+	print("История команд сохранена")
 
 # Функция для обновления цвета кнопки "Применить"
 func update_apply_button_color(button: Button):
@@ -514,6 +519,10 @@ func _enter_tree():
 	# Загружаем историю извлеченных команд
 	write_debug_log("Загружаем историю извлеченных команд", "INFO")
 	load_extracted_commands_history()
+	
+	# Загружаем историю выполненных команд
+	write_debug_log("Загружаем историю выполненных команд", "INFO")
+	load_executed_commands_history()
 	
 	# Загружаем счетчик запросов
 	write_debug_log("Загружаем счетчик запросов", "INFO")
@@ -583,6 +592,25 @@ func execute_ini_command(ini_text: String):
 	# Выполняем новые команды
 	print("Выполняем команды...")
 	execute_new_commands_directly(ini_text)
+	
+	# Добавляем команды в историю выполненных ПОСЛЕ выполнения
+	print("=== ДОБАВЛЕНИЕ В ИСТОРИЮ ===")
+	print("Исходный текст: '", ini_text, "'")
+	var commands_list = ini_text.split("\n")
+	for cmd in commands_list:
+		cmd = cmd.strip_edges()
+		if cmd != "" and (cmd.begins_with("[++") or cmd.begins_with("[--") or cmd.begins_with("[-+")):
+			if cmd not in executed_commands_history:
+				executed_commands_history.append(cmd)
+				print("Добавлена в историю выполненных: '", cmd, "'")
+	
+	# Сохраняем историю выполненных команд
+	save_executed_commands_history()
+	
+	# Добавляем в историю команд
+	print("Вызываем add_to_extracted_commands_history с: '", ini_text, "'")
+	add_to_extracted_commands_history(ini_text)
+	print("Команды добавлены в историю!")
 
 func execute_new_commands_directly(commands_text: String):
 	print("=== ОТЛАДКА: Начинаем выполнение команд ===")
@@ -610,8 +638,12 @@ func execute_new_commands_directly(commands_text: String):
 	var current_code = current_script.source_code
 	print("Текущий код (длина): ", current_code.length())
 	
+	# Извлекаем команды из текста (для вкладки "Команды")
+	var extracted_commands = extract_new_commands(commands_text)
+	print("Извлеченные команды: '", extracted_commands, "'")
+	
 	# Выполняем новые команды
-	var new_code = execute_new_commands(commands_text, current_code)
+	var new_code = execute_new_commands(extracted_commands, current_code)
 	print("Новый код (длина): ", new_code.length())
 	
 	# Применяем изменения
@@ -1185,6 +1217,9 @@ func show_smart_replace_dialog_v2():
 					executed_commands_history.append(cmd)
 					print("Добавлена в историю выполненных: '", cmd, "'")
 			
+			# Сохраняем историю выполненных команд
+			save_executed_commands_history()
+			
 			add_to_extracted_commands_history(current_extracted_commands)
 			current_extracted_commands = ""
 			update_apply_button_color(apply_commands_button)
@@ -1226,6 +1261,7 @@ func show_smart_replace_dialog_v2():
 		
 		# Очищаем историю выполненных команд
 		executed_commands_history.clear()
+		save_executed_commands_history()
 		print("История выполненных команд очищена")
 	)
 	control_buttons.add_child(clear_chat_control_button)
@@ -1848,6 +1884,9 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 [++func:Move:1@ if health > 0:\\n\\tprint("Жив")]
 [++func:up:Move@ var speed = 100]
 [++func:down:Move@ print("После Move")]
+[-+func:Move@ print("Новое содержимое")]
+[-+func:Move:new@ func new():\n    print("Новая функция")]
+[-+func:Move:if3<5@ if 3<5:\n    print("Новый блок")]
 ```
 
 **🚨 ВАЖНО: Вместо "name" пиши РЕАЛЬНОЕ ИМЯ ФУНКЦИИ из кода!**
@@ -1906,6 +1945,11 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 - `[++func:down@ код]` - в конец файла
 - `[++func:up:heal@ код]` - выше функции heal (замени "heal" на реальное имя)
 - `[++func:down:update@ код]` - после функции update (замени "update" на реальное имя)
+
+### Замена
+- `[-+func:Move@ код]` - заменить содержимое функции Move
+- `[-+func:Move:new@ код]` - заменить функцию Move на новую с именем "new"
+- `[-+func:Move:if3<5@ код]` - найти блок if 3<5 в функции Move и заменить его
 
 ### Удаление
 - `[--func:old_function@]` - удалить функцию old_function (замени "old_function" на реальное имя)
@@ -2437,9 +2481,9 @@ func process_ai_response(ai_response: String):
 							update_apply_button_color(apply_button)
 
 func remove_commands_from_text(text: String) -> String:
-	# Удаляем команды формата [++func:name@ код] и [--func:name@] из текста
+	# Удаляем команды формата [++func:name@ код], [--func:name@], [-+func:name@ код] из текста
 	var regex = RegEx.new()
-	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+:[^@]*@[^\\]]*\\]")
 	
 	print("Удаляем команды из текста длиной: ", text.length())
 	print("Исходный текст: '", text, "'")
@@ -2578,7 +2622,7 @@ func extract_new_commands(ai_response: String) -> String:
 	# Ищем новые команды в тексте
 	var commands = []
 	var regex = RegEx.new()
-	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+:[^@]*@[^\\]]*\\]")
 	
 	var results = regex.search_all(ai_response)
 	print("Парсер нашел команд: ", results.size())
@@ -2612,7 +2656,9 @@ func parse_new_command(command: String) -> Dictionary:
 		"element_name": "",
 		"indent_level": 0,
 		"direction": "",
-		"target_function": ""
+		"target_function": "",
+		"old_function_name": "",
+		"block_search": ""
 	}
 	
 	# Убираем внешние скобки
@@ -2626,6 +2672,10 @@ func parse_new_command(command: String) -> Dictionary:
 	elif clean_command.begins_with("--"):
 		# Команды удаления по имени [--func:name@]
 		result.type = "delete_by_name"
+		clean_command = clean_command.substr(2)
+	elif clean_command.begins_with("-+"):
+		# Новые команды замены [-+func:name@], [-+func:name:new@], [-+func:name:block@]
+		result.type = "replace_function"
 		clean_command = clean_command.substr(2)
 	
 	# Извлекаем параметры и код
@@ -2677,9 +2727,54 @@ func parse_new_command(command: String) -> Dictionary:
 	
 	if parts.size() >= 2:
 		result.code = parts[1].strip_edges()
-			# Обрабатываем экранированные символы
-	result.code = result.code.replace("\\n", "\n")
-	result.code = result.code.replace("\\t", "\t")
+		# Обрабатываем экранированные символы
+		result.code = result.code.replace("\\n", "\n")
+		result.code = result.code.replace("\\t", "\t")
+	
+	# Дополнительная обработка для команд замены [-+func:name@]
+	if result.type == "replace_function":
+		var param_part = ""
+		if parts.size() >= 1:
+			param_part = parts[0]
+		
+		print("=== ОТЛАДКА ПАРСИНГА ЗАМЕНЫ ===")
+		print("param_part: '", param_part, "'")
+		
+		if param_part.contains(":"):
+			var element_parts = param_part.split(":", true, 1)
+			print("element_parts: ", element_parts)
+			if element_parts.size() >= 1:
+				result.element_type = element_parts[0]  # func
+			if element_parts.size() >= 2:
+				var remaining_part = element_parts[1]
+				print("remaining_part: '", remaining_part, "'")
+				# Проверяем, есть ли еще двоеточие в remaining_part
+				if remaining_part.contains(":"):
+					# Команда [-+func:Go:new@] - заменить функцию Go на новую с именем new
+					var sub_parts = remaining_part.split(":", true, 1)
+					if sub_parts.size() >= 1:
+						result.old_function_name = sub_parts[0]  # Go
+						print("Установлен old_function_name: ", result.old_function_name)
+					if sub_parts.size() >= 2:
+						if sub_parts[1] == "new":
+							result.element_name = "new"
+							print("Установлен element_name: ", result.element_name)
+						else:
+							# Команда [-+func:Go:if3<5@] - искать блок if 3<5 в функции Go
+							result.block_search = sub_parts[1]
+				elif remaining_part == "new":
+					# Команда [-+func:Move:new@] - заменить функцию на "new"
+					result.element_name = "new"
+					result.old_function_name = element_parts[0]  # Move
+				elif remaining_part.contains("if") or remaining_part.contains("for") or remaining_part.contains("while"):
+					# Команда [-+func:Move:if3<5@] - искать блок if 3<5
+					result.block_search = remaining_part
+				else:
+					# Команда [-+func:Move@] - заменить содержимое функции
+					result.element_name = remaining_part
+		else:
+			# Команда [-+func@] - заменить содержимое функции
+			result.element_type = param_part
 	
 	print("Результат парсинга: ", result)
 	return result
@@ -2768,14 +2863,21 @@ func create_indent(level: int, use_tabs: bool) -> String:
 
 func insert_multiline_code(lines: Array, position: int, code: String):
 	# Вставляет многострочный код в указанную позицию
+	print("=== ВСТАВКА МНОГОСТРОЧНОГО КОДА ===")
+	print("Позиция вставки: ", position)
+	print("Код для вставки: '", code, "'")
+	
 	var code_lines = code.split("\n")
+	print("Строк кода: ", code_lines.size())
 	
 	# Определяем тип отступов в файле (табы или пробелы)
 	var use_tabs = detect_indent_type(lines)
+	print("Используем табы: ", use_tabs)
 	
 	# Вставляем строки в обратном порядке, чтобы сохранить порядок
 	for i in range(code_lines.size() - 1, -1, -1):
 		var line = code_lines[i]
+		print("Вставляем строку ", i + 1, ": '", line, "'")
 		
 		# Конвертируем отступы если нужно
 		if use_tabs:
@@ -2784,8 +2886,10 @@ func insert_multiline_code(lines: Array, position: int, code: String):
 		
 		if position > 0 and position <= lines.size():
 			lines.insert(position - 1, line)
+			print("Вставлено на позицию: ", position - 1)
 		else:
 			lines.append(line)
+			print("Добавлено в конец файла")
 
 func execute_new_commands(commands: String, current_code: String) -> String:
 	print("=== ОТЛАДКА: execute_new_commands ===")
@@ -2796,7 +2900,7 @@ func execute_new_commands(commands: String, current_code: String) -> String:
 	
 	# Парсим команды напрямую, без проверки executed_commands_history
 	var regex = RegEx.new()
-	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\+[a-zA-Z_]+:[a-zA-Z_]+:[^@]*@[^\\]]*\\]")
 	
 	var results = regex.search_all(commands)
 	var command_list = []
@@ -2890,6 +2994,53 @@ func execute_single_new_command(parsed: Dictionary, lines: Array) -> Array:
 					if start_line < lines.size():
 						lines.remove_at(start_line)
 		
+		"replace_function":
+			# Новые команды замены [-+func:name@], [-+func:name:new@], [-+func:name:block@]
+			print("Обрабатываем команду замены функции")
+			print("parsed.element_name: ", parsed.element_name)
+			print("parsed.old_function_name: ", parsed.old_function_name)
+			
+			if parsed.element_name == "new":
+				# Команда [-+func:Move:new@ код] - заменить функцию на новую с именем "new"
+				print("Ищем функцию для замены: ", parsed.old_function_name)
+				var target_line = find_element_by_name(lines, parsed.element_type, parsed.old_function_name)
+				if target_line > 0:
+					# Удаляем старую функцию
+					var start_line = target_line  # Индекс строки с объявлением функции (без вычитания 1)
+					var end_line = find_function_end(lines, start_line)
+					print("Функция найдена на строке: ", target_line)
+					print("Удаляем строки с ", start_line, " по ", end_line)
+					
+					# Удаляем строки в обратном порядке, чтобы индексы не сбивались
+					for i in range(end_line, start_line - 1, -1):
+						if i < lines.size():
+							print("Удаляем строку ", i + 1, ": '", lines[i], "'")
+							lines.remove_at(i)
+					
+					# Вставляем новый код на позицию start_line (где была функция)
+					if parsed.code != "":
+						print("Вставляем новый код на позицию: ", start_line)
+						insert_multiline_code(lines, start_line, parsed.code)
+			else:
+				# Команда [-+func:Move@ код] - заменить содержимое функции
+				var target_line = find_element_by_name(lines, parsed.element_type, parsed.element_name)
+				if target_line > 0:
+					var start_line = target_line  # Индекс строки с объявлением функции (без вычитания 1)
+					var end_line = find_function_end(lines, start_line)
+					print("Заменяем содержимое функции, строки с ", start_line + 1, " по ", end_line)
+					
+					# Сохраняем строку с объявлением функции
+					var function_declaration = lines[start_line]
+					
+					# Удаляем содержимое функции (но не объявление) в обратном порядке
+					for i in range(end_line, start_line, -1):
+						if i < lines.size():
+							lines.remove_at(i)
+					
+					# Вставляем новый код
+					if parsed.code != "":
+						insert_multiline_code(lines, start_line + 1, parsed.code)
+	
 
 	
 	return lines
@@ -2913,6 +3064,58 @@ func find_block_end(lines: Array, start_line: int) -> int:
 		current_line += 1
 	
 	return current_line - 1
+
+func find_function_end(lines: Array, start_line: int) -> int:
+	# Находим конец функции с учетом отступов
+	if start_line >= lines.size():
+		return start_line
+	
+	var current_line = start_line  # Начинаем с самой строки объявления функции
+	print("Ищем конец функции, начиная со строки: ", start_line + 1)
+	
+	# Получаем отступ объявления функции
+	var function_declaration = lines[start_line]
+	var function_indent = get_line_indent(function_declaration)
+	print("Отступ объявления функции: ", function_indent)
+	
+	# Ищем конец функции по отступам
+	while current_line < lines.size():
+		var line = lines[current_line]
+		var line_indent = get_line_indent(line)
+		var stripped_line = line.strip_edges()
+		
+		print("Строка ", current_line + 1, " (отступ ", line_indent, "): '", stripped_line, "'")
+		
+		# Если отступ меньше или равен отступу функции И строка не пустая
+		# значит функция закончилась
+		if line_indent <= function_indent and stripped_line != "":
+			# Проверяем, что это не продолжение многострочного выражения
+			if not is_continuation_line(stripped_line):
+				print("Найден конец функции на строке: ", current_line - 1)
+				return current_line - 1
+		
+		current_line += 1
+	
+	print("Достигнут конец файла, конец на строке: ", lines.size() - 1)
+	return lines.size() - 1
+
+func is_continuation_line(line: String) -> bool:
+	# Проверяем, является ли строка продолжением многострочного выражения
+	var stripped = line.strip_edges()
+	
+	# Если строка заканчивается на операторы продолжения
+	if stripped.ends_with("\\") or stripped.ends_with("(") or stripped.ends_with("["):
+		return true
+	
+	# Если строка начинается с операторов продолжения
+	if stripped.begins_with(")") or stripped.begins_with("]") or stripped.begins_with(","):
+		return true
+	
+	# Если это часть многострочной строки
+	if stripped.begins_with('"""') or stripped.ends_with('"""'):
+		return true
+	
+	return false
 
 func get_line_indent(line: String) -> int:
 	# Получаем количество пробелов в начале строки
@@ -3142,5 +3345,30 @@ func show_add_error_dialog(errors_list: ItemList):
 	# Показываем диалог
 	get_editor_interface().get_base_control().add_child(dialog)
 	dialog.popup_centered()
+
+# Функция для сохранения истории выполненных команд
+func save_executed_commands_history():
+	var file = FileAccess.open(EXECUTED_COMMANDS_HISTORY_FILE, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(executed_commands_history))
+		file.close()
+
+# Функция для загрузки истории выполненных команд
+func load_executed_commands_history():
+	if FileAccess.file_exists(EXECUTED_COMMANDS_HISTORY_FILE):
+		var file = FileAccess.open(EXECUTED_COMMANDS_HISTORY_FILE, FileAccess.READ)
+		if file:
+			var content = file.get_as_text()
+			file.close()
+			var json = JSON.new()
+			var parse_result = json.parse(content)
+			if parse_result == OK:
+				executed_commands_history = json.data
+			else:
+				executed_commands_history = []
+		else:
+			executed_commands_history = []
+	else:
+		executed_commands_history = []
 
 	
