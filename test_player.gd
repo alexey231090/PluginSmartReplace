@@ -3,8 +3,12 @@ extends CharacterBody2D
 var speed = 300
 var health = 100
 
+var fwffwe=89
 func _ready():
-	print("Player ready")
+	if 2<3:
+		pass
+	
+
 
 func _process(_delta):
 	pass
@@ -13,7 +17,16 @@ func _process(_delta):
 func theta_plugin_test():
 		print("Theta plugin test function called!")
 
-# Проверяет, жив ли игрок
-func is_alive():
-		print("Проверка жизни игрока...")
-		return health > 0
+func testIflevel():
+	if 3>2:
+		if 2<4:
+			if 9>0:
+				if 34==32:
+					if 34>32:
+						print("уровни вложинности")
+func Go():
+	print("Идти")
+func Move(): 
+	pass
+func jump():
+	print("Прыжок")

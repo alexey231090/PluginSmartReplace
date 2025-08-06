@@ -78,6 +78,9 @@ var current_extracted_commands = ""
 var extracted_commands_history = []
 const EXTRACTED_COMMANDS_HISTORY_FILE = "res://extracted_commands_history.json"
 
+# История выполненных команд для предотвращения дублирования
+var executed_commands_history = []
+
 # Флаг для отслеживания первого сообщения в сессии
 var is_first_message_in_session = true
 
@@ -643,7 +646,7 @@ func generate_preview_for_new_commands(old_code: String, new_code: String) -> St
 	
 	for command in commands:
 		command = command.strip_edges()
-		if command != "" and (command.begins_with("[++") or command.begins_with("[--")):
+		if command != "" and (command.begins_with("[++") or command.begins_with("[--") or command.begins_with("[-+")):
 			valid_commands.append(command)
 	
 	if valid_commands.size() == 0:
@@ -661,9 +664,41 @@ func generate_preview_for_new_commands(old_code: String, new_code: String) -> St
 					"insert":
 						preview += "Добавить код в строку %d\n" % parsed.line
 						preview += "  Код: %s\n" % parsed.code
+					"insert_by_element":
+						if parsed.direction == "end":
+							preview += "Добавить код в конец файла\n"
+						elif parsed.direction != "":
+							if parsed.target_function != "":
+								preview += "Добавить код %s функции '%s'\n" % [parsed.direction, parsed.target_function]
+							else:
+								if parsed.direction == "up":
+									preview += "Добавить код выше первой функции\n"
+								else:
+									preview += "Добавить код в конец файла\n"
+						elif parsed.element_name != "":
+							if parsed.indent_level > 0:
+								preview += "Добавить код в %s '%s' на уровень %d\n" % [parsed.element_type, parsed.element_name, parsed.indent_level]
+							else:
+								preview += "Добавить код в %s '%s' на 0 уровень\n" % [parsed.element_type, parsed.element_name]
+						elif parsed.element_position > 0:
+							preview += "Добавить код выше %s-го элемента '%s'\n" % [parsed.element_position, parsed.element_type]
+						else:
+							preview += "Добавить код в конец файла\n"
+						preview += "  Код: %s\n" % parsed.code
 					"replace_deep":
 						preview += "Заменить блок в строке %d\n" % parsed.line
 						preview += "  Новый код: %s\n" % parsed.code
+					"delete_and_insert":
+						preview += "Заменить блок в строке %d (удалить блок + вставить новый код)\n" % parsed.line
+						preview += "  Новый код: %s\n" % parsed.code
+					"delete_and_insert_single":
+						preview += "Заменить строку %d (удалить строку + вставить новый код)\n" % parsed.line
+						preview += "  Новый код: %s\n" % parsed.code
+					"insert_with_level":
+						preview += "Вставить код в структуру '%s' выше строки %d\n" % [parsed.structure, parsed.line]
+						preview += "  Код: %s\n" % parsed.code
+					"delete_by_name":
+						preview += "Удалить %s '%s'\n" % [parsed.element_type, parsed.element_name]
 					"delete":
 						preview += "Удалить строку %d\n" % parsed.line
 					"delete_deep":
@@ -1141,6 +1176,15 @@ func show_smart_replace_dialog_v2():
 	apply_commands_button.pressed.connect(func():
 		if current_extracted_commands.strip_edges() != "":
 			execute_ini_command(current_extracted_commands)
+			
+			# Сохраняем команды в историю выполненных ПОСЛЕ выполнения
+			var commands_list = current_extracted_commands.split("\n")
+			for cmd in commands_list:
+				cmd = cmd.strip_edges()
+				if cmd != "" and cmd not in executed_commands_history:
+					executed_commands_history.append(cmd)
+					print("Добавлена в историю выполненных: '", cmd, "'")
+			
 			add_to_extracted_commands_history(current_extracted_commands)
 			current_extracted_commands = ""
 			update_apply_button_color(apply_commands_button)
@@ -1179,6 +1223,10 @@ func show_smart_replace_dialog_v2():
 		current_extracted_commands = ""
 		extracted_commands_edit.text = ""
 		update_apply_button_color(apply_commands_button)
+		
+		# Очищаем историю выполненных команд
+		executed_commands_history.clear()
+		print("История выполненных команд очищена")
 	)
 	control_buttons.add_child(clear_chat_control_button)
 	
@@ -1550,11 +1598,24 @@ func send_message_to_ai(message: String):
 	# Добавляем сообщение пользователя в чат
 	add_message_to_chat("Вы", message, "user")
 	
-	# Получаем текущий код файла для контекста
-	write_debug_log("Получаем текущий код файла", "INFO")
+	# Получаем текущий код файла для контекста (принудительно из редактора)
+	write_debug_log("Получаем актуальный код файла из редактора", "INFO")
 	var current_code = get_current_file_content()
 	write_debug_log("Текущий код файла получен, длина: " + str(current_code.length()), "INFO")
 	print("Текущий код файла получен, длина: ", current_code.length())
+	
+	# Добавляем информацию о количестве строк для отладки
+	var lines = current_code.split("\n")
+	write_debug_log("Количество строк в файле: " + str(lines.size()), "INFO")
+	print("Количество строк в файле: ", lines.size())
+	
+	# Проверяем, есть ли несохраненные изменения
+	var script_editor = get_editor_interface().get_script_editor()
+	if script_editor and script_editor.get_current_script():
+		var current_script = script_editor.get_current_script()
+		if current_script.has_meta("modified"):
+			print("⚠️ ВНИМАНИЕ: Файл содержит несохраненные изменения! Сохраните файл для получения актуального кода.")
+			write_debug_log("Файл содержит несохраненные изменения", "WARNING")
 	
 	# Формируем промпт для AI
 	write_debug_log("Формируем промпт для AI", "INFO")
@@ -1658,12 +1719,26 @@ func get_current_file_content() -> String:
 	if script_editor:
 		var current_script = script_editor.get_current_script()
 		if current_script:
+			# Читаем код с диска (убедитесь, что файл сохранен!)
 			var file_path = current_script.resource_path
 			var file = FileAccess.open(file_path, FileAccess.READ)
 			if file:
 				var content = file.get_as_text()
 				file.close()
+				write_debug_log("Получен код с диска, длина: " + str(content.length()), "INFO")
+				
+				# Проверяем, есть ли несохраненные изменения
+				if script_editor.get_current_script().has_meta("modified"):
+					write_debug_log("ВНИМАНИЕ: Файл может содержать несохраненные изменения!", "WARNING")
+					print("⚠️ ВНИМАНИЕ: Сохраните файл перед отправкой к AI для получения актуального кода!")
+				
 				return content
+			else:
+				write_debug_log("Не удалось открыть файл для чтения", "ERROR")
+		else:
+			write_debug_log("Текущий скрипт не найден", "WARNING")
+	else:
+		write_debug_log("Редактор скриптов не найден", "WARNING")
 	return ""
 
 # Функция для получения информации о текущем скрипте и узле
@@ -1751,20 +1826,102 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 	current_script_info = get_current_script_info()
 	
 	# Добавляем оптимизированные инструкции при каждом сообщении
-	instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot v2.2.
+	instructions = """Ты - эксперт по GDScript и плагину Smart Replace для Godot v2.3.
 
-ОБЯЗАТЕЛЬНО используй команды для ЛЮБЫХ изменений кода:
-- [++N@ код] - добавить код в строку N
-- [+++N@ код] - заменить блок в строке N (функция/if/for)
-- [--N@] - удалить строку N
-- [---N@] - удалить блок в строке N
-- Используй \\n для переноса строк
+## ФОРМАТ КОМАНД
 
-ПРИМЕРЫ: [++3@ print("Привет")], [+++5@ func test():\\n    return true], [--7@], [---10@]
+### Вставка по именам функций
+```
+[++func@ код] - добавить код в конец файла
+[++func:Move@ код] - добавить код в функцию Move
+[++func:Move:1@ код] - добавить код в функцию Move с отступом 1
+[++func:up@ код] - добавить код выше первой функции
+[++func:down@ код] - добавить код в конец файла
+[++func:up:Move@ код] - добавить код выше функции Move
+[++func:down:Move@ код] - добавить код после функции Move
+```
 
-Отвечай естественно, но скрыто добавляй команды. Пользователь не должен их видеть.
+**Примеры:**
+```
+[++func@ func new_function():\\n    pass]
+[++func:Move@ print("Движение")]
+[++func:Move:1@ if health > 0:\\n\\tprint("Жив")]
+[++func:up:Move@ var speed = 100]
+[++func:down:Move@ print("После Move")]
+```
 
-Если пользователь использует "(Admin)" или "(admin)" - ты разработчику Алексею, отвечай технически и сообщай модель AI.
+**🚨 ВАЖНО: Вместо "name" пиши РЕАЛЬНОЕ ИМЯ ФУНКЦИИ из кода!**
+**Примеры с реальными именами функций:**
+```
+[++func:attack@ print("Атака!")]
+[++func:take_damage@ health -= damage]
+[++func:heal@ health = min(health + amount, max_health)]
+[++func:is_alive@ return health > 0]
+[--func:old_function@]
+[++func:up:player_move@ var speed = 200]
+[++func:down:update@ print("Обновление завершено")]
+```
+
+### Удаление по именам функций
+```
+[--func:Move@] - удалить функцию Move
+```
+
+### Многострочный код
+Используйте `\\n` для переноса строк, `\\n\\t` для вложений с отступами:
+```
+[++func@ func example():\\n    pass]
+[++func:Move@ if health > 0:\\n\\tprint("Жив")\\n\\treturn true]
+```
+
+## Принцип работы
+
+### Скрытые команды
+- AI отвечает пользователю обычным текстом
+- Команды выполняются автоматически в фоне
+- Пользователь не видит технические детали
+
+### Кодовое слово для разработчика
+- Если пользователь использует кодовое слово "(Admin)" или "(admin)" в сообщении
+- AI понимает, что это разработчик плагина Алексей
+- AI отвечает более технически и детально
+- AI должен отвечать на все вопросы и должен понимать что Алексей тестирует плагин
+
+### Правила использования
+1. **Скрытость команд** - пользователь не видит команды
+2. **Естественность ответа** - отвечайте как обычный помощник
+3. **Точные имена функций** - указывайте правильные имена функций для вставки/удаления
+4. **Многострочный код** - используйте `\\n` для переноса строк, `\\n\\t` для вложений с отступами
+5. **🚨 КРИТИЧЕСКИ ВАЖНО** - вместо "name" в командах пиши РЕАЛЬНОЕ ИМЯ ФУНКЦИИ из кода!
+6. **Поиск функций** - найди точное имя функции в коде и используй его в команде
+7. **НЕ показывай команды** - никогда не упоминай команды в ответе пользователю
+
+## Поддерживаемые команды
+
+### Вставка
+- `[++func@ код]` - в конец файла
+- `[++func:attack@ код]` - в функцию attack (замени "attack" на реальное имя)
+- `[++func:move:1@ код]` - в функцию move с отступом 1 (замени "move" на реальное имя)
+- `[++func:up@ код]` - выше первой функции
+- `[++func:down@ код]` - в конец файла
+- `[++func:up:heal@ код]` - выше функции heal (замени "heal" на реальное имя)
+- `[++func:down:update@ код]` - после функции update (замени "update" на реальное имя)
+
+### Удаление
+- `[--func:old_function@]` - удалить функцию old_function (замени "old_function" на реальное имя)
+
+**🚨 ЗАПОМНИ: Вместо "attack", "move", "heal", "update", "old_function" пиши РЕАЛЬНЫЕ ИМЕНА ФУНКЦИЙ из кода!**
+
+**🚨 ВАЖНО: НЕ ПОКАЗЫВАЙ ЭТИ КОМАНДЫ ПОЛЬЗОВАТЕЛЮ!**
+
+🚨 ПРАВИЛО ИСПОЛЬЗОВАНИЯ КОМАНД:
+- НЕ ПИШИ КОМАНДЫ АВТОМАТИЧЕСКИ!
+- Используй команды ТОЛЬКО когда пользователь явно просит что-то ИЗМЕНИТЬ в коде
+- Если пользователь просто спрашивает, объясняет, обсуждает код - отвечай БЕЗ КОМАНД
+- Если пользователь говорит "добавь", "измени", "удали", "создай" - тогда используй команды
+- Если пользователь говорит "что это", "как работает", "объясни" - НЕ используй команды
+- Команды нужны только для РЕАЛЬНЫХ ИЗМЕНЕНИЙ кода
+- Парсер автоматически скроет команды от пользователя
 
 """
 	
@@ -1776,8 +1933,21 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 Путь: {path}
 Узел: {node_path}
 Иерархия: {hierarchy}
+Количество строк: {line_count}
 
-""".format(current_script_info)
+🚨 КРИТИЧЕСКИ ВАЖНО: 
+- Используй команды по именам функций: [++func:name@], [--func:name@]
+- Найди точные имена функций в коде ниже
+- Используй многострочный код с \\n и \\n\\t для отступов
+- Команды выполняются автоматически парсером
+
+""".format({
+			"filename": current_script_info.get("filename", ""),
+			"path": current_script_info.get("path", ""),
+			"node_path": current_script_info.get("node_path", ""),
+			"hierarchy": current_script_info.get("hierarchy", ""),
+			"line_count": current_code.split("\n").size()
+		})
 	
 	# Удаляем старый блок с напоминанием, так как теперь инструкции отправляются при каждом сообщении
 		print("=== ИНФОРМАЦИЯ ДЛЯ AI ===")
@@ -1792,12 +1962,34 @@ func create_chat_prompt(message: String, current_code: String) -> String:
 {current_code}
 ```
 
-ИСТОРИЯ ЧАТА:
+ИСТОРИЯ ЧАТА (для контекста):
 {chat_history}
 
 ПОЛЬЗОВАТЕЛЬ: {message}
 
-Помни: отвечай естественно, как обычный помощник, но скрыто добавляй команды формата [++N@ код], [--N@] для выполнения изменений."""
+Помни: отвечай естественно, как обычный помощник.
+
+🚨 КОГДА ИСПОЛЬЗОВАТЬ КОМАНДЫ:
+- ТОЛЬКО когда пользователь явно просит ИЗМЕНИТЬ код
+- Скрыто добавляй команды формата [++func:name@ код], [--func:name@]
+- НЕ ДУБЛИРУЙ команды из предыдущих сообщений!
+
+🚨 КОГДА НЕ ИСПОЛЬЗОВАТЬ КОМАНДЫ:
+- Когда пользователь просто спрашивает или обсуждает код
+- Когда пользователь просит объяснить что-то
+- Когда пользователь не просит изменений
+- Когда пользователь говорит "молодец", "хорошо", "спасибо" - отвечай БЕЗ КОМАНД
+
+🚨 ВАЖНО: НЕ ПОКАЗЫВАЙ ПОЛЬЗОВАТЕЛЮ КОМАНДЫ И ТЕХНИЧЕСКИЕ ДЕТАЛИ!
+- Отвечай естественно, как обычный помощник
+- НЕ упоминай команды в ответе
+- НЕ показывай технические детали парсера
+- НЕ пиши "Вот ответ на последнее сообщение"
+
+🚨 ВАЖНО: В командах вместо "name" используй РЕАЛЬНОЕ ИМЯ ФУНКЦИИ из кода!
+Примеры: [++func:attack@], [--func:old_function@], [++func:player_move@]
+
+🚨 ВАЖНО: НЕ ПОКАЗЫВАЙ КОМАНДЫ ПОЛЬЗОВАТЕЛЮ! Отвечай естественно!"""
 	
 	# Формируем историю чата для контекста
 	var history_text = ""
@@ -2206,11 +2398,16 @@ func process_ai_response(ai_response: String):
 	is_requesting = false
 	print("Сбрасываем is_requesting = false в process_ai_response")
 	
-	# Извлекаем INI команды из ответа AI
-	var ini_commands = extract_ini_commands(ai_response)
+	# Извлекаем новые команды из ответа AI
+	var new_commands = extract_new_commands(ai_response)
 	
-	# Убираем INI команды из текстового ответа для пользователя
-	var text_response = remove_ini_commands_from_text(ai_response)
+	# ВРЕМЕННО: Показываем полный ответ AI без скрытия команд
+	print("=== ОТЛАДКА: Обработка ответа AI ===")
+	print("Исходный ответ AI: '", ai_response, "'")
+	
+	# Показываем полный ответ AI (временно)
+	var text_response = ai_response
+	print("Показываем полный ответ AI: '", text_response, "'")
 	
 	# Получаем имя текущей модели для отображения в чате
 	var model_info = get_current_model_info()
@@ -2220,9 +2417,9 @@ func process_ai_response(ai_response: String):
 	add_message_to_chat(model_name, text_response, "ai")
 	
 	# Если есть команды, показываем их для применения
-	if ini_commands != "":
+	if new_commands != "":
 		# Показываем извлеченные команды в отладочном поле
-		show_extracted_commands(ini_commands)
+		show_extracted_commands(new_commands)
 		print("Команды извлечены и готовы к применению. Нажмите 'Применить команды' для их выполнения.")
 	else:
 		# Очищаем предыдущие команды
@@ -2239,21 +2436,36 @@ func process_ai_response(ai_response: String):
 						if apply_button:
 							update_apply_button_color(apply_button)
 
-func remove_ini_commands_from_text(text: String) -> String:
-	# Удаляем все блоки команд между =[command]= и =[end]=
-	var lines = text.split("\n")
-	var result_lines = []
-	var in_command = false
+func remove_commands_from_text(text: String) -> String:
+	# Удаляем команды формата [++func:name@ код] и [--func:name@] из текста
+	var regex = RegEx.new()
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
 	
-	for line in lines:
-		if line.strip_edges() == "=[command]=":
-			in_command = true
-		elif line.strip_edges() == "=[end]=":
-			in_command = false
-		elif not in_command:
-			result_lines.append(line)
+	print("Удаляем команды из текста длиной: ", text.length())
+	print("Исходный текст: '", text, "'")
 	
-	return "\n".join(result_lines)
+	# Находим все команды
+	var results = regex.search_all(text)
+	var commands_found = []
+	for result in results:
+		commands_found.append(result.get_string())
+	
+	print("Найдено команд: ", commands_found.size())
+	for cmd in commands_found:
+		print("Команда: '", cmd, "'")
+	
+	# Заменяем каждую команду на пробел
+	var result = text
+	for cmd in commands_found:
+		result = result.replace(cmd, " ")
+	
+	# Очищаем лишние пробелы
+	result = result.replace("  ", " ")  # Убираем двойные пробелы
+	result = result.strip_edges()  # Убираем лишние пробелы в начале и конце
+	
+	print("Текст после удаления команд: '", result, "'")
+	print("Текст после удаления команд длиной: ", result.length())
+	return result
 
 func show_api_key_dialog():
 	# Показываем сообщение пользователю
@@ -2366,78 +2578,214 @@ func extract_new_commands(ai_response: String) -> String:
 	# Ищем новые команды в тексте
 	var commands = []
 	var regex = RegEx.new()
-	regex.compile("\\[\\+\\+\\d+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+\\+?\\d+@[^\\]]*\\]|\\[\\-\\-\\+\\+\\d+@[^\\]]*\\]|\\[\\-\\+\\d+@[^\\]]*\\]|\\[\\-\\-\\-?\\d+@[^\\]]*\\]")
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
 	
 	var results = regex.search_all(ai_response)
-	for result in results:
-		commands.append(result.get_string())
+	print("Парсер нашел команд: ", results.size())
 	
-	return "\n".join(commands)
+	# Убираем дублирующиеся команды и уже выполненные
+	var unique_commands = []
+	for result in results:
+		var command = result.get_string()
+		print("Найдена команда: '", command, "'")
+		if command not in unique_commands and command not in executed_commands_history:
+			unique_commands.append(command)
+			commands.append(command)
+		elif command in unique_commands:
+			print("Дублирующаяся команда пропущена: '", command, "'")
+		elif command in executed_commands_history:
+			print("Уже выполненная команда пропущена: '", command, "'")
+	
+	var result = "\n".join(commands)
+	print("Итоговые команды (без дубликатов): '", result, "'")
+	return result
 
 func parse_new_command(command: String) -> Dictionary:
-	# Парсим новую команду формата [++N@ код], [++N:N-level@ код] или [--N@]
+	print("=== ПАРСИНГ КОМАНДЫ ===")
+	print("Команда для парсинга: '", command, "'")
+	
+	# Парсим новую команду формата [++func:N@ код], [++for:N@ код], [--N@] и т.д.
 	var result = {
 		"type": "",
-		"line": 0,
 		"code": "",
-		"deep": false,
-		"level": 0,
-		"structure": ""
+		"element_type": "",
+		"element_name": "",
+		"indent_level": 0,
+		"direction": "",
+		"target_function": ""
 	}
 	
 	# Убираем внешние скобки
 	var clean_command = command.substr(1, command.length() - 2)
 	
 	# Определяем тип команды
-	if clean_command.begins_with("--++"):
-		result.type = "delete_and_insert"
-		result.deep = true
-		clean_command = clean_command.substr(4)
-	elif clean_command.begins_with("-+"):
-		result.type = "delete_and_insert_single"
-		result.deep = false
+	if clean_command.begins_with("++"):
+		# Новые команды [++func:N@], [++func:name@], [++func:name:level@] и т.д.
+		result.type = "insert_by_element"  # Все команды ++ обрабатываем как insert_by_element
 		clean_command = clean_command.substr(2)
-	elif clean_command.begins_with("+++"):
-		result.type = "replace_deep"
-		result.deep = true
-		clean_command = clean_command.substr(3)
-	elif clean_command.begins_with("++"):
-		# Проверяем, есть ли уровень вложения [++N:N-level@]
-		if clean_command.contains(":"):
-			result.type = "insert_with_level"
-			clean_command = clean_command.substr(2)
-		else:
-			result.type = "insert"
-			clean_command = clean_command.substr(2)
-	elif clean_command.begins_with("---"):
-		result.type = "delete_deep"
-		result.deep = true
-		clean_command = clean_command.substr(3)
 	elif clean_command.begins_with("--"):
-		result.type = "delete"
+		# Команды удаления по имени [--func:name@]
+		result.type = "delete_by_name"
 		clean_command = clean_command.substr(2)
 	
-	# Извлекаем номер строки, структуру и код
+	# Извлекаем параметры и код
 	var parts = clean_command.split("@", true, 1)
+	print("Парсим команду: '", clean_command, "'")
+	print("Части после @: ", parts)
+	
 	if parts.size() >= 1:
-		var line_part = parts[0]
-		# Проверяем, есть ли структура [++N:structure@]
-		if line_part.contains(":"):
-			var line_structure_parts = line_part.split(":", true, 1)
-			if line_structure_parts.size() >= 1:
-				result.line = int(line_structure_parts[0])
-			if line_structure_parts.size() >= 2:
-				result.structure = line_structure_parts[1]
+		var param_part = parts[0]
+		print("Параметры: '", param_part, "'")
+		# Проверяем новые команды [++func@], [++func:up@], [++func:down@], [++func:up:Move@] и т.д.
+		if param_part.contains(":"):
+			var element_parts = param_part.split(":", true, 1)
+			print("Элементы параметров: ", element_parts)
+			if element_parts.size() >= 1:
+				result.element_type = element_parts[0]  # func, for, if, while
+				print("Тип элемента: ", result.element_type)
+			if element_parts.size() >= 2:
+				# Проверяем, есть ли еще двоеточие в оставшейся части
+				var remaining_part = element_parts[1]
+				if remaining_part.contains(":"):
+					# Команда вида [++func:down:Move@] - разбираем дальше
+					var sub_parts = remaining_part.split(":", true, 1)
+					if sub_parts.size() >= 1:
+						if sub_parts[0] == "up" or sub_parts[0] == "down":
+							result.direction = sub_parts[0]
+							print("Направление: ", result.direction)
+							if sub_parts.size() >= 2:
+								result.target_function = sub_parts[1]
+								print("Целевая функция: ", result.target_function)
+				else:
+					# Проверяем направление (up/down) или имя функции
+					if remaining_part == "up" or remaining_part == "down":
+						result.direction = remaining_part
+						print("Направление: ", result.direction)
+					else:
+						# Команды с именами или уровнями отступов
+							result.element_name = remaining_part
+							print("Имя элемента: ", result.element_name)
+							# Проверяем, есть ли уровень отступов [++func:name:level@]
+							if element_parts.size() >= 3:
+								result.indent_level = int(element_parts[2])
+								print("Уровень отступов: ", result.indent_level)
 		else:
-			result.line = int(line_part)
+			# Команды без параметров [++func@] - в конец файла
+			result.element_type = param_part
+			# Устанавливаем флаг для команды без параметров
+			result.direction = "end"
 	
 	if parts.size() >= 2:
 		result.code = parts[1].strip_edges()
-		# Обрабатываем экранированные символы
-		result.code = result.code.replace("\\n", "\n")
-		result.code = result.code.replace("\\t", "\t")
+			# Обрабатываем экранированные символы
+	result.code = result.code.replace("\\n", "\n")
+	result.code = result.code.replace("\\t", "\t")
 	
+	print("Результат парсинга: ", result)
 	return result
+
+
+
+func find_element_by_name(lines: Array, element_type: String, name: String) -> int:
+	# Находим элемент по имени и возвращаем номер строки его начала
+	print("Ищем элемент типа '", element_type, "' с именем '", name, "'")
+	for i in range(lines.size()):
+		var line = lines[i].strip_edges()
+		print("Строка ", i + 1, ": '", line, "'")
+		# Ищем функцию с именем (может быть с параметрами или без)
+		if line.begins_with(element_type + " " + name):
+			print("Найдена на строке: ", i + 1)
+			return i + 1  # Возвращаем номер строки (от 1)
+	
+	print("Элемент не найден")
+	# Если элемент не найден, возвращаем -1
+	return -1
+
+func find_insert_position_in_element(lines: Array, element_start: int, indent_level: int) -> int:
+	# Находим позицию для вставки внутри элемента с указанным уровнем отступов
+	if element_start <= 0 or element_start > lines.size():
+		return lines.size()  # Возвращаем конец файла если позиция некорректная
+		
+	var element_end = find_block_end(lines, element_start - 1)
+	var target_indent = indent_level * 4  # 4 пробела на уровень
+	
+	# Ищем подходящую позицию внутри элемента
+	for i in range(element_start, element_end):
+		if i >= lines.size():
+			break
+		var line = lines[i]
+		var line_indent = get_line_indent(line)
+		
+		# Если находим строку с нужным отступом или большим, вставляем перед ней
+		if line_indent >= target_indent:
+			return i + 1  # Возвращаем номер строки (от 1)
+	
+	# Если не нашли подходящую позицию, вставляем перед концом элемента
+	return element_end
+
+func find_first_function_position(lines: Array) -> int:
+	# Находим позицию первой функции
+	for i in range(lines.size()):
+		var line = lines[i].strip_edges()
+		if line.begins_with("func "):
+			return i + 1  # Возвращаем номер строки (от 1)
+	return lines.size()  # Если функций нет, возвращаем конец файла
+
+func find_position_relative_to_function(lines: Array, direction: String, target_function: String) -> int:
+	# Находим позицию выше или ниже указанной функции
+	print("Ищем функцию: ", target_function)
+	var function_pos = find_element_by_name(lines, "func", target_function)
+	print("Найдена функция на позиции: ", function_pos)
+	
+	if function_pos > 0:
+		if direction == "up":
+			print("Вставляем выше функции на позиции: ", function_pos)
+			return function_pos  # Вставить выше функции
+		elif direction == "down":
+			var function_end = find_block_end(lines, function_pos - 1)
+			print("Конец функции на позиции: ", function_end, ", вставляем после на позиции: ", function_end + 1)
+			return function_end + 1  # Вставить после функции
+	
+	print("Функция не найдена, вставляем в конец файла")
+	return lines.size()  # Если функция не найдена, в конец файла
+
+func detect_indent_type(lines: Array) -> bool:
+	# Возвращает true если файл использует табы, false если пробелы
+	if lines.size() > 0:
+		for line in lines:
+			if line.length() > 0 and line[0] == "\t":
+				return true
+			elif line.length() > 0 and line[0] == " ":
+				return false
+	return false  # По умолчанию пробелы
+
+func create_indent(level: int, use_tabs: bool) -> String:
+	# Создает отступ указанного уровня
+	if use_tabs:
+		return "\t".repeat(level)
+	else:
+		return "    ".repeat(level)
+
+func insert_multiline_code(lines: Array, position: int, code: String):
+	# Вставляет многострочный код в указанную позицию
+	var code_lines = code.split("\n")
+	
+	# Определяем тип отступов в файле (табы или пробелы)
+	var use_tabs = detect_indent_type(lines)
+	
+	# Вставляем строки в обратном порядке, чтобы сохранить порядок
+	for i in range(code_lines.size() - 1, -1, -1):
+		var line = code_lines[i]
+		
+		# Конвертируем отступы если нужно
+		if use_tabs:
+			# Заменяем 4 пробела на таб
+			line = line.replace("    ", "\t")
+		
+		if position > 0 and position <= lines.size():
+			lines.insert(position - 1, line)
+		else:
+			lines.append(line)
 
 func execute_new_commands(commands: String, current_code: String) -> String:
 	print("=== ОТЛАДКА: execute_new_commands ===")
@@ -2445,138 +2793,104 @@ func execute_new_commands(commands: String, current_code: String) -> String:
 	
 	# Выполняем новые команды
 	var lines = current_code.split("\n")
-	var new_commands = extract_new_commands(commands)
 	
-	print("Извлеченные команды: ", new_commands)
+	# Парсим команды напрямую, без проверки executed_commands_history
+	var regex = RegEx.new()
+	regex.compile("\\[\\+\\+[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:[a-zA-Z_]+:[0-9]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:up:[a-zA-Z_]+@[^\\]]*\\]|\\[\\+\\+[a-zA-Z_]+:down:[a-zA-Z_]+@[^\\]]*\\]|\\[\\-\\-[a-zA-Z_]+:[a-zA-Z_]+@[^\\]]*\\]")
 	
-	if new_commands == "":
+	var results = regex.search_all(commands)
+	var command_list = []
+	for result in results:
+		var command = result.get_string()
+		print("Найдена команда для выполнения: '", command, "'")
+		command_list.append(command)
+	
+	print("Команд для выполнения: ", command_list.size())
+	
+	if command_list.size() == 0:
 		print("Нет команд для выполнения")
 		return current_code
 	
-	var command_list = new_commands.split("\n")
-	# Сортируем команды по номеру строки (от больших к меньшим для удаления)
-	# Сначала выполняем команды удаления снизу вверх, затем остальные сверху вниз
-	var delete_commands = []
-	var other_commands = []
-	
 	for command in command_list:
-		if command.strip_edges() == "":
-			continue
-		var parsed = parse_new_command(command)
-		if parsed.type.begins_with("delete"):
-			delete_commands.append(command)
-		else:
-			other_commands.append(command)
-	
-	# Сортируем команды удаления по убыванию номера строки
-	delete_commands.sort_custom(func(a, b): 
-		var a_parsed = parse_new_command(a)
-		var b_parsed = parse_new_command(b)
-		return a_parsed.line > b_parsed.line
-	)
-	
-	# Сортируем остальные команды по возрастанию номера строки
-	other_commands.sort_custom(func(a, b): 
-		var a_parsed = parse_new_command(a)
-		var b_parsed = parse_new_command(b)
-		return a_parsed.line < b_parsed.line
-	)
-	
-	# Объединяем команды: сначала удаления, потом остальные
-	command_list = delete_commands + other_commands
-	
-	for command in command_list:
-		if command.strip_edges() == "":
-			continue
-		
 		var parsed = parse_new_command(command)
 		lines = execute_single_new_command(parsed, lines)
 	
 	return "\n".join(lines)
 
 func execute_single_new_command(parsed: Dictionary, lines: Array) -> Array:
-	var line_num = parsed.line - 1  # Конвертируем в индекс массива
 	
 	match parsed.type:
-		"insert":
-			# Добавляем код в строку N
-			if line_num >= lines.size():
-				# Если строка не существует, добавляем в конец
+
+		
+		"insert_by_element":
+			# Добавляем код в указанную позицию
+			if parsed.direction == "end":
+				# Команда без параметров [++func@] - в конец файла
+				insert_multiline_code(lines, lines.size(), parsed.code)
+			elif parsed.direction != "":
+				# Команды с направлениями [++func:up@], [++func:down@], [++func:up:Move@], [++func:down:Move@]
+				var target_pos = 0
+				if parsed.target_function != "":
+					# Вставка относительно конкретной функции [++func:up:Move@], [++func:down:Move@]
+					target_pos = find_position_relative_to_function(lines, parsed.direction, parsed.target_function)
+				else:
+					# Вставка относительно первой функции [++func:up@], [++func:down@]
+					if parsed.direction == "up":
+						target_pos = find_first_function_position(lines)
+					else:  # down
+						target_pos = lines.size()  # В конец файла
+				
+				# Проверяем границы перед вставкой
+				if target_pos > 0 and target_pos <= lines.size():
+					insert_multiline_code(lines, target_pos, parsed.code)
+				else:
+					# Если позиция некорректная, добавляем в конец
+					insert_multiline_code(lines, lines.size(), parsed.code)
+			elif parsed.element_name != "":
+				# Старые команды с именами [++func:name@] или [++func:name:level@]
+				var element_start = find_element_by_name(lines, parsed.element_type, parsed.element_name)
+				if element_start > 0:
+					if parsed.indent_level > 0:
+						# Вставка с указанным уровнем отступов [++func:name:level@]
+						var insert_pos = find_insert_position_in_element(lines, element_start, parsed.indent_level)
+						var use_tabs = detect_indent_type(lines)
+						var indent = create_indent(parsed.indent_level, use_tabs)  # Создаем отступ
+						var indented_code = indent + parsed.code
+						if insert_pos > 0 and insert_pos <= lines.size():
+							insert_multiline_code(lines, insert_pos, indented_code)
+						else:
+							insert_multiline_code(lines, lines.size(), indented_code)
+					else:
+						# Вставка на 0 уровень [++func:name@]
+						var element_end = find_block_end(lines, element_start - 1)
+						if element_end >= 0 and element_end <= lines.size():
+							insert_multiline_code(lines, element_end + 1, parsed.code)
+						else:
+							insert_multiline_code(lines, lines.size(), parsed.code)
+				else:
+					# Если элемент не найден, добавляем в конец
+					insert_multiline_code(lines, lines.size(), parsed.code)
+
+			else:
+				# Команда без параметров [++func@] - в конец файла
 				lines.append(parsed.code)
-			else:
-				# Вставляем код, сдвигая остальные строки
-				lines.insert(line_num, parsed.code)
 		
-		"insert_with_level":
-			# Добавляем код внутрь указанной структуры
-			var insert_position = find_structure_insert_position(lines, line_num, parsed.structure)
-			var indent = calculate_indent_for_structure(lines, insert_position, parsed.structure)
-			var indented_code = indent + parsed.code
-			
-			if insert_position >= lines.size():
-				# Если позиция не существует, добавляем в конец
-				lines.append(indented_code)
-			else:
-				# Вставляем код с отступом в найденную позицию
-				lines.insert(insert_position, indented_code)
+
 		
-		"delete_and_insert":
-			# Удаляем строку и весь вложенный блок, затем вставляем новый код
-			if line_num < lines.size():
-				var start_line = line_num
-				var end_line = find_block_end(lines, line_num)
-				
-				# Удаляем старый блок
-				for i in range(start_line, end_line + 1):
-					if start_line < lines.size():
-						lines.remove_at(start_line)
-				
-				# Вставляем новый код
-				var new_lines = parsed.code.split("\n")
-				for i in range(new_lines.size() - 1, -1, -1):
-					lines.insert(start_line, new_lines[i])
-		
-		"delete_and_insert_single":
-			# Удаляем только одну строку, затем вставляем новый код (без многострочности)
-			if line_num < lines.size():
-				# Удаляем строку N
-				lines.remove_at(line_num)
-				
-				# Вставляем новый код (игнорируем \n, вставляем как одну строку)
-				var single_line_code = parsed.code.replace("\\n", " ").replace("\n", " ")
-				lines.insert(line_num, single_line_code)
-		
-		"replace_deep":
-			# Заменяет строку и весь вложенный блок
-			if line_num < lines.size():
-				var start_line = line_num
-				var end_line = find_block_end(lines, line_num)
-				
-				# Удаляем старый блок
-				for i in range(start_line, end_line + 1):
-					if i < lines.size():
-						lines.remove_at(start_line)
-				
-				# Вставляем новый код
-				var new_lines = parsed.code.split("\n")
-				for i in range(new_lines.size() - 1, -1, -1):
-					lines.insert(start_line, new_lines[i])
-		
-		"delete":
-			# Удаляем только строку N
-			if line_num < lines.size():
-				lines.remove_at(line_num)
-		
-		"delete_deep":
-			# Удаляем строку и все вложенные блоки
-			if line_num < lines.size():
-				var start_line = line_num
-				var end_line = find_block_end(lines, line_num)
+		"delete_by_name":
+			# Удаляем элемент по имени
+			var target_line = find_element_by_name(lines, parsed.element_type, parsed.element_name)
+			if target_line > 0:
+				# Находим конец элемента и удаляем весь блок
+				var start_line = target_line - 1  # Конвертируем в индекс массива
+				var end_line = find_block_end(lines, start_line)
 				
 				# Удаляем весь блок
 				for i in range(start_line, end_line + 1):
 					if start_line < lines.size():
 						lines.remove_at(start_line)
+		
+
 	
 	return lines
 
@@ -2612,52 +2926,21 @@ func get_line_indent(line: String) -> int:
 			break
 	return indent
 
-func find_structure_insert_position(lines: Array, target_line: int, structure_name: String) -> int:
-	# Находим позицию для вставки кода внутрь указанной структуры
-	var structure_start = -1
-	
-	# Ищем ближайшую структуру выше target_line
-	for i in range(target_line - 1, -1, -1):
-		var line = lines[i].strip_edges()
-		if line.begins_with(structure_name + " "):
-			structure_start = i
-			break
-	
-	if structure_start == -1:
-		# Если структура не найдена, вставляем в target_line
-		return target_line
-	
-	# Находим конец структуры
-	var structure_end = find_block_end(lines, structure_start)
-	
-	# Вставляем перед последней строкой структуры (обычно это pass или return)
-	var insert_pos = structure_end
-	for i in range(structure_start + 1, structure_end + 1):
-		if i < lines.size():
-			var line = lines[i].strip_edges()
-			if line == "pass" or line.begins_with("return"):
-				insert_pos = i
-				break
-	
-	return insert_pos
-
-func calculate_indent_for_structure(lines: Array, insert_position: int, structure_name: String) -> String:
-	# Рассчитываем отступ для вставки в структуру
-	var base_indent = 0
-	
-	# Ищем начало структуры
-	for i in range(insert_position - 1, -1, -1):
-		var line = lines[i].strip_edges()
-		if line.begins_with(structure_name + " "):
-			base_indent = get_line_indent(lines[i]) + 4  # Внутри структуры
-			break
-	
-	# Создаем строку отступа
+func get_line_indent_string(line: String) -> String:
+	# Получаем строку отступов из строки
 	var indent = ""
-	for i in range(base_indent):
-		indent += " "
-	
+	for char in line:
+		if char == " ":
+			indent += " "
+		elif char == "\t":
+			indent += "    "  # Табуляция = 4 пробела
+		else:
+			break
 	return indent
+
+
+
+
 
 # Функция для обновления списка ошибок Godot
 func update_errors_list(errors_list: ItemList):
